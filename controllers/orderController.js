@@ -1,12 +1,11 @@
-import { createShopifyOrder } from "../services/shopifyService.js";
-import { getProducts } from "../services/shopifyService.js";
-import axios from "axios";
+import { createShopifyOrder, getProducts } from "../services/shopifyService.js";
 
 export const createOrder = async (req, res) => {
   try {
+    const shop = req.query.shop; // 🔥 ADD THIS
+
     const { name, phone, address, city, items } = req.body;
 
-    // 🔥 validation
     if (!name || !phone || !address || !city || !items?.length) {
       return res.status(400).json({
         success: false,
@@ -14,7 +13,6 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    // 🔥 convert items → Shopify format
     const lineItems = items.map((item) => ({
       variant_id: item.variantId,
       quantity: item.quantity,
@@ -48,13 +46,12 @@ export const createOrder = async (req, res) => {
         phone: phone,
       },
       financial_status: "pending",
-
-      // 🔥 NEW (important for tracking)
       tags: "COD, Custom Form",
       note: "Order created from custom frontend form",
     };
 
-    const result = await createShopifyOrder(orderData);
+    // 🔥 FIX HERE
+    const result = await createShopifyOrder(shop, orderData);
 
     res.status(200).json({
       success: true,
@@ -70,25 +67,11 @@ export const createOrder = async (req, res) => {
   }
 };
 
-// export const fetchProducts = async (req, res) => {
-//   try {
-//     const data = await getProducts();
-
-//     res.json({
-//       success: true,
-//       products: data.products,
-//     });
-//   } catch (err) {
-//     res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch products",
-//     });
-//   }
-// };
-
 export const fetchProducts = async (req, res) => {
   try {
-    const data = await getProducts();
+    const shop = req.query.shop; // 🔥 ADD THIS
+
+    const data = await getProducts(shop); // 🔥 FIX
 
     res.json({
       success: true,

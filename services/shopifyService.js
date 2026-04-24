@@ -1,14 +1,17 @@
 import axios from "axios";
+import Shop from "../models/Shop.js";
 
-// 🔥 GET PRODUCTS (dynamic store)
-export const getProducts = async () => {
-  const { shop, accessToken } = global.shopData;
+// 🔥 GET PRODUCTS
+export const getProducts = async (shop) => {
+  const shopData = await Shop.findOne({ shop });
+
+  if (!shopData) throw new Error("Shop not found");
 
   const response = await axios.get(
     `https://${shop}/admin/api/2024-04/products.json`,
     {
       headers: {
-        "X-Shopify-Access-Token": accessToken,
+        "X-Shopify-Access-Token": shopData.accessToken,
       },
     },
   );
@@ -16,16 +19,18 @@ export const getProducts = async () => {
   return response.data;
 };
 
-// 🔥 CREATE ORDER (dynamic store)
-export const createShopifyOrder = async (data) => {
-  const { shop, accessToken } = global.shopData;
+// 🔥 CREATE ORDER
+export const createShopifyOrder = async (shop, data) => {
+  const shopData = await Shop.findOne({ shop });
+
+  if (!shopData) throw new Error("Shop not found");
 
   const response = await axios.post(
     `https://${shop}/admin/api/2024-01/orders.json`,
     { order: data },
     {
       headers: {
-        "X-Shopify-Access-Token": accessToken,
+        "X-Shopify-Access-Token": shopData.accessToken,
         "Content-Type": "application/json",
       },
     },

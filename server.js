@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -5,6 +6,11 @@ import express from "express";
 import cors from "cors";
 import app from "./app.js";
 import { shopify } from "./config/shopifyAuth.js";
+import Shop from "./models/Shop.js";
+
+mongoose.connect(process.env.MONGO_URI).then(() => {
+  console.log("✅ MongoDB Connected");
+});
 
 const server = express();
 
@@ -45,7 +51,7 @@ server.get("/auth/callback", async (req, res) => {
 
     const { shop, accessToken } = session;
 
-    global.shopData = { shop, accessToken };
+    await Shop.findOneAndUpdate({ shop }, { accessToken }, { upsert: true });
 
     console.log("✅ STORE CONNECTED:", shop);
     console.log("🔑 TOKEN:", accessToken);
