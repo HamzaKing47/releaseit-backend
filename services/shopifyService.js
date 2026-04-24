@@ -1,34 +1,32 @@
-import dotenv from "dotenv";
-dotenv.config();
 import axios from "axios";
-import { SHOPIFY_CONFIG } from "../config/shopify.js";
 
-export const createShopifyOrder = async (data) => {
-  try {
-    const response = await axios.post(
-      `https://${SHOPIFY_CONFIG.storeUrl}/admin/api/2024-01/orders.json`,
-      { order: data },
-      {
-        headers: {
-          "X-Shopify-Access-Token": SHOPIFY_CONFIG.accessToken,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-
-    return response.data;
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-    throw new Error("Shopify order failed");
-  }
-};
-
+// 🔥 GET PRODUCTS (dynamic store)
 export const getProducts = async () => {
+  const { shop, accessToken } = global.shopData;
+
   const response = await axios.get(
-    `https://${process.env.SHOP}.myshopify.com/admin/api/2024-04/products.json`,
+    `https://${shop}/admin/api/2024-04/products.json`,
     {
       headers: {
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "X-Shopify-Access-Token": accessToken,
+      },
+    },
+  );
+
+  return response.data;
+};
+
+// 🔥 CREATE ORDER (dynamic store)
+export const createShopifyOrder = async (data) => {
+  const { shop, accessToken } = global.shopData;
+
+  const response = await axios.post(
+    `https://${shop}/admin/api/2024-01/orders.json`,
+    { order: data },
+    {
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
       },
     },
   );
