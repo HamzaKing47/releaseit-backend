@@ -61,7 +61,7 @@ server.get("/auth/callback", async (req, res) => {
 });
 
 // 🔥 YOUR EXISTING ROUTES
-server.use("/api", app);
+server.use(app);
 
 // START SERVER
 const port = process.env.PORT || 5000;
