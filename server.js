@@ -20,18 +20,18 @@ server.get("/auth", async (req, res) => {
 
     if (!shop) return res.status(400).send("Missing shop");
 
-    const authRoute = await shopify.auth.begin({
+    await shopify.auth.begin({
       shop,
       callbackPath: "/auth/callback",
       isOnline: false,
       rawRequest: req,
       rawResponse: res,
     });
-
-    res.redirect(authRoute);
   } catch (err) {
     console.error("AUTH ERROR:", err);
-    res.status(500).send("Auth start failed");
+    if (!res.headersSent) {
+      res.status(500).send("Auth start failed");
+    }
   }
 });
 

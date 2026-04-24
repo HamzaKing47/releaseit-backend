@@ -1,4 +1,9 @@
-import { shopifyApi, LATEST_API_VERSION } from "@shopify/shopify-api";
+import "@shopify/shopify-api/adapters/node";
+
+import dotenv from "dotenv";
+dotenv.config();
+
+import { shopifyApi } from "@shopify/shopify-api";
 
 export const shopify = shopifyApi({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -11,6 +16,6 @@ export const shopify = shopifyApi({
     "write_themes",
   ],
   hostName: process.env.SHOPIFY_HOST.replace("https://", ""),
-  apiVersion: LATEST_API_VERSION,
+  apiVersion: "2024-04",
   isEmbeddedApp: false,
 });
