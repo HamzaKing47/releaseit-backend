@@ -3,9 +3,13 @@ import Shop from "../models/Shop.js";
 
 // 🔥 GET PRODUCTS
 export const getProducts = async (shop) => {
+  console.log("🔍 SHOP REQUEST:", shop);
+
   const shopData = await Shop.findOne({ shop });
 
-  if (!shopData) throw new Error("Shop not found");
+  console.log("🧠 DB RESULT:", shopData);
+
+  if (!shopData) throw new Error("Shop not found in DB");
 
   const response = await axios.get(
     `https://${shop}/admin/api/2024-04/products.json`,

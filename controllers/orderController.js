@@ -2,7 +2,14 @@ import { createShopifyOrder, getProducts } from "../services/shopifyService.js";
 
 export const createOrder = async (req, res) => {
   try {
-    const shop = req.query.shop; // 🔥 ADD THIS
+    const shop = req.query.shop?.replace(/\/$/, "");
+
+    if (!shop) {
+      return res.status(400).json({
+        success: false,
+        message: "Shop missing",
+      });
+    } // 🔥 ADD THIS
 
     const { name, phone, address, city, items } = req.body;
 
@@ -69,9 +76,16 @@ export const createOrder = async (req, res) => {
 
 export const fetchProducts = async (req, res) => {
   try {
-    const shop = req.query.shop; // 🔥 ADD THIS
+    const shop = req.query.shop?.replace(/\/$/, "");
 
-    const data = await getProducts(shop); // 🔥 FIX
+    if (!shop) {
+      return res.status(400).json({
+        success: false,
+        message: "Shop missing",
+      });
+    }
+
+    const data = await getProducts(shop);
 
     res.json({
       success: true,
@@ -82,7 +96,7 @@ export const fetchProducts = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Failed to fetch products",
+      message: err.message || "Failed to fetch products",
     });
   }
 };
