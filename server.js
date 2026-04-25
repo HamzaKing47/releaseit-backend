@@ -104,5 +104,7 @@ server.get("/test", (req, res) => {
 });
 
 server.get("/", (req, res) => {
-  res.send("ReleaseIt App Running 🚀");
+  const shop = req.query.shop;
+
+  res.redirect(`https://releaseitnow.vercel.app/?shop=${shop}`);
 });
