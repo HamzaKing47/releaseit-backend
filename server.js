@@ -7,6 +7,7 @@ import cors from "cors";
 import app from "./app.js";
 import { shopify } from "./config/shopifyAuth.js";
 import Shop from "./models/Shop.js";
+import axios from "axios";
 
 mongoose.connect(process.env.MONGO_URI).then(() => {
   console.log("✅ MongoDB Connected");
@@ -50,6 +51,22 @@ server.get("/auth/callback", async (req, res) => {
     });
 
     const { shop, accessToken } = session;
+
+    await axios.post(
+      `https://${shop}/admin/api/2024-01/script_tags.json`,
+      {
+        script_tag: {
+          event: "onload",
+          src: "https://releaseitnow.vercel.app/inject.js",
+        },
+      },
+      {
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+      },
+    );
 
     await Shop.findOneAndUpdate({ shop }, { accessToken }, { upsert: true });
 
