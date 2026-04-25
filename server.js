@@ -108,3 +108,32 @@ server.get("/", (req, res) => {
 
   res.redirect(`https://releaseitnow.vercel.app/?shop=${shop}`);
 });
+
+server.get("/test-script", async (req, res) => {
+  try {
+    const shop = req.query.shop;
+
+    const shopData = await Shop.findOne({ shop });
+
+    const response = await axios.post(
+      `https://${shop}/admin/api/2024-01/script_tags.json`,
+      {
+        script_tag: {
+          event: "onload",
+          src: "https://releaseitnow.vercel.app/inject.js",
+        },
+      },
+      {
+        headers: {
+          "X-Shopify-Access-Token": shopData.accessToken,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    res.json(response.data);
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.send("Error injecting script");
+  }
+});
