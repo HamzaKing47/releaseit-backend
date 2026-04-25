@@ -9,9 +9,13 @@ import { shopify } from "./config/shopifyAuth.js";
 import Shop from "./models/Shop.js";
 import axios from "axios";
 
-mongoose.connect(process.env.MONGO_URI).then(() => {
-  console.log("✅ MongoDB Connected");
-});
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => {
+    console.error("❌ Mongo Error:", err.message);
+    process.exit(1); // crash clearly instead of silent fail
+  });
 
 const server = express();
 
