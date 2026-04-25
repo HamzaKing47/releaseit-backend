@@ -98,3 +98,7 @@ server.listen(port, () => {
 server.get("/test", (req, res) => {
   res.send("AUTH ROUTE ACTIVE");
 });
+
+server.get("/", (req, res) => {
+  res.send("ReleaseIt App Running 🚀");
+});
