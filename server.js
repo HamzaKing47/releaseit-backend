@@ -52,21 +52,28 @@ server.get("/auth/callback", async (req, res) => {
 
     const { shop, accessToken } = session;
 
-    await axios.post(
-      `https://${shop}/admin/api/2024-01/script_tags.json`,
-      {
-        script_tag: {
-          event: "onload",
-          src: "https://releaseitnow.vercel.app/inject.js",
+    // 🔥 Inject script (safe)
+    try {
+      await axios.post(
+        `https://${shop}/admin/api/2024-01/script_tags.json`,
+        {
+          script_tag: {
+            event: "onload",
+            src: "https://releaseitnow.vercel.app/inject.js",
+          },
         },
-      },
-      {
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
+        {
+          headers: {
+            "X-Shopify-Access-Token": accessToken,
+            "Content-Type": "application/json",
+          },
         },
-      },
-    );
+      );
+
+      console.log("✅ Script injected");
+    } catch (e) {
+      console.error("❌ Script inject failed:", e.response?.data || e.message);
+    }
 
     await Shop.findOneAndUpdate({ shop }, { accessToken }, { upsert: true });
 
