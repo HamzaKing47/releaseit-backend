@@ -54,21 +54,21 @@ server.get("/auth/callback", async (req, res) => {
       rawResponse: res,
     });
 
-    // ❌ WRONG (remove this)
-    // const { shop, accessToken } = session;
+    console.log("🔥 FULL SESSION:", session); // 👈 DEBUG
 
-    // ✅ CORRECT
-    const shop = session.shop;
-    const accessToken = session.accessToken;
+    // ✅ IMPORTANT FIX
+    const shop = session.shop || session?.session?.shop;
+    const accessToken = session.accessToken || session?.session?.accessToken;
 
     if (!shop || !accessToken) {
-      throw new Error("Shop or token missing");
+      console.log("❌ SHOP OR TOKEN MISSING");
+      return res.status(500).send("Shop or token missing");
     }
 
     await Shop.findOneAndUpdate(
       { shop },
       { shop, accessToken },
-      { upsert: true },
+      { upsert: true, new: true },
     );
 
     console.log("✅ STORE CONNECTED:", shop);
