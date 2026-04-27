@@ -97,6 +97,7 @@ export const fetchProducts = async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message || "Failed to fetch products",
+      error: err.response?.data || err.message,
     });
   }
 };
