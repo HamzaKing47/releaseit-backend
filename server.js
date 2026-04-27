@@ -134,6 +134,8 @@ server.get("/test-script", async (req, res) => {
     res.json(response.data);
   } catch (err) {
     console.error(err.response?.data || err.message);
-    res.send("Error injecting script");
+    res.status(500).json({
+      error: err.response?.data || err.message,
+    });
   }
 });
