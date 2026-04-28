@@ -1,4 +1,5 @@
 import { createShopifyOrder, getProducts } from "../services/shopifyService.js";
+import Shop from "../models/Shop.js";
 
 export const createOrder = async (req, res) => {
   try {
@@ -99,5 +100,24 @@ export const fetchProducts = async (req, res) => {
       message: err.message || "Failed to fetch products",
       error: err.response?.data || err.message,
     });
+  }
+};
+
+export const getSettings = async (req, res) => {
+  try {
+    const shop = req.query.shop;
+
+    if (!shop) {
+      return res.status(400).json({ success: false });
+    }
+
+    const shopData = await Shop.findOne({ shop });
+
+    res.json({
+      success: true,
+      mode: shopData?.mode || "both",
+    });
+  } catch (err) {
+    res.status(500).json({ success: false });
   }
 };
