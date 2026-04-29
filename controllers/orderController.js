@@ -1,6 +1,11 @@
 import { createShopifyOrder, getProducts } from "../services/shopifyService.js";
 import Shop from "../models/Shop.js";
 
+const formatPhone = (phone) => {
+  if (!phone) return phone;
+  return phone.replace(/\s|-/g, "");
+};
+
 export const createOrder = async (req, res) => {
   try {
     const shop = req.query.shop?.replace(/\/$/, "");
@@ -21,6 +26,13 @@ export const createOrder = async (req, res) => {
       });
     }
 
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone required",
+      });
+    }
+
     const lineItems = items.map((item) => ({
       variant_id: item.variantId,
       quantity: item.quantity,
@@ -31,7 +43,7 @@ export const createOrder = async (req, res) => {
       customer: {
         first_name: name,
         last_name: "User",
-        phone: phone,
+        phone: formatPhone(phone),
       },
       shipping_address: {
         first_name: name,
@@ -41,7 +53,7 @@ export const createOrder = async (req, res) => {
         province: "Punjab",
         country: "Pakistan",
         country_code: "PK",
-        phone: phone,
+        phone: formatPhone(phone),
       },
       billing_address: {
         first_name: name,
@@ -51,7 +63,7 @@ export const createOrder = async (req, res) => {
         province: "Punjab",
         country: "Pakistan",
         country_code: "PK",
-        phone: phone,
+        phone: formatPhone(phone),
       },
       financial_status: "pending",
       tags: "COD, Custom Form",
