@@ -133,3 +133,20 @@ export const getSettings = async (req, res) => {
     res.status(500).json({ success: false });
   }
 };
+
+export const saveSettings = async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    const { mode } = req.body;
+
+    if (!shop) {
+      return res.status(400).json({ success: false });
+    }
+
+    await Shop.findOneAndUpdate({ shop }, { mode }, { upsert: true });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false });
+  }
+};
