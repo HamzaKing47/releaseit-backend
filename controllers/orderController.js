@@ -143,7 +143,7 @@ export const saveSettings = async (req, res) => {
       return res.status(400).json({ success: false });
     }
 
-    await Shop.findOneAndUpdate({ shop }, { mode }, { upsert: true });
+    await Shop.findOneAndUpdate({ shop }, { ...settings }, { upsert: true });
 
     res.json({ success: true });
   } catch (err) {
