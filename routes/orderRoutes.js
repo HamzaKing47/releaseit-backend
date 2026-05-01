@@ -1,10 +1,5 @@
 import express from "express";
-import {
-  createOrder,
-  fetchProducts,
-  getSettings,
-  saveSettings,
-} from "../controllers/orderController.js";
+import { createOrder, fetchProducts } from "../controllers/orderController.js";
 
 const router = express.Router();
 
