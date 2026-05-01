@@ -114,39 +114,3 @@ export const fetchProducts = async (req, res) => {
     });
   }
 };
-
-export const getSettings = async (req, res) => {
-  try {
-    const shop = req.query.shop;
-
-    if (!shop) {
-      return res.status(400).json({ success: false });
-    }
-
-    const shopData = await Shop.findOne({ shop });
-
-    res.json({
-      success: true,
-      mode: shopData?.mode || "both",
-    });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
-};
-
-export const saveSettings = async (req, res) => {
-  try {
-    const shop = req.query.shop;
-    const { mode } = req.body;
-
-    if (!shop) {
-      return res.status(400).json({ success: false });
-    }
-
-    await Shop.findOneAndUpdate({ shop }, { ...settings }, { upsert: true });
-
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
-};
