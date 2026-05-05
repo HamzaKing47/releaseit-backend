@@ -9,6 +9,7 @@ const shopSchema = new mongoose.Schema({
   textColor: { type: String, default: "#ffffff" },
   borderRadius: { type: Number, default: 10 },
   position: { type: String, default: "below" }, // above | below
+  formSchema: { type: Array, default: [] },
 });
 
 export default mongoose.model("Shop", shopSchema);
