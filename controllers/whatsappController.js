@@ -102,70 +102,88 @@ export const saveWhatsappSettings = async (req, res) => {
 };
 
 /* ============================================================
-   CONNECT — QR generate karo
+   CONNECT — Async start karo, immediately return karo
+   Frontend polling se QR fetch karega
 ============================================================ */
 export const connectWhatsapp = async (req, res) => {
   try {
     const shop = req.query.shop?.replace(/\/$/, "");
     if (!shop) return res.status(400).json({ success: false });
 
-    const liveStatus = getClientStatus(shop);
-    if (liveStatus === "connected") {
+    // Already connected?
+    if (getClientStatus(shop) === "connected") {
       return res.json({ success: true, status: "connected" });
     }
 
+    // QR already ready hai?
     const existingQR = getClientQR(shop);
     if (existingQR) {
       const qrImage = await QRCode.toDataURL(existingQR);
       return res.json({ success: true, status: "waiting_qr", qrCode: qrImage });
     }
 
-    let qrResolved = false;
+    // Status update karo
+    await WhatsappSession.findOneAndUpdate(
+      { shop },
+      { status: "connecting" },
+      { upsert: true },
+    );
 
-    const qrPromise = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (!qrResolved) reject(new Error("QR timeout"));
-      }, 20000);
-
-      getOrCreateClient(
-        shop,
-        async (qr) => {
-          if (!qrResolved) {
-            qrResolved = true;
-            clearTimeout(timeout);
-            const qrImage = await QRCode.toDataURL(qr);
-            resolve({ status: "waiting_qr", qrCode: qrImage });
-          }
-        },
-        () => {
-          if (!qrResolved) {
-            qrResolved = true;
-            clearTimeout(timeout);
-            resolve({ status: "connected" });
-          }
-          registerMessageHandler(shop);
-        },
-        () => console.log(`[WA] Disconnected: ${shop}`),
-      ).then(() => {
-        if (!qrResolved) {
-          const check = setInterval(() => {
-            if (getClientStatus(shop) === "connected") {
-              qrResolved = true;
-              clearInterval(check);
-              resolve({ status: "connected" });
-              registerMessageHandler(shop);
-            }
-          }, 500);
-          setTimeout(() => clearInterval(check), 15000);
-        }
-      });
+    // Baileys ko BACKGROUND mein start karo — await mat karo
+    // Ye immediately return karega, frontend polling karega
+    getOrCreateClient(
+      shop,
+      async (qr) => {
+        console.log(`[WA] QR ready for: ${shop}`);
+        // QR memory mein save hai (baileyService mein)
+      },
+      () => {
+        console.log(`[WA] Connected: ${shop}`);
+        registerMessageHandler(shop);
+      },
+      () => {
+        console.log(`[WA] Disconnected: ${shop}`);
+      },
+    ).catch((err) => {
+      console.error(`[WA] Client start error for ${shop}:`, err.message);
     });
 
-    const result = await qrPromise;
-    res.json({ success: true, ...result });
+    // Immediately respond — "starting" state
+    res.json({ success: true, status: "starting" });
   } catch (err) {
     console.error("[WA] Connect:", err.message);
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/* ============================================================
+   GET QR — Frontend ye poll karega
+   Har 3 second mein call hoga
+============================================================ */
+export const getQRCode = async (req, res) => {
+  try {
+    const shop = req.query.shop?.replace(/\/$/, "");
+    if (!shop) return res.status(400).json({ success: false });
+
+    const liveStatus = getClientStatus(shop);
+
+    // Connected ho gaya?
+    if (liveStatus === "connected") {
+      return res.json({ success: true, status: "connected" });
+    }
+
+    // QR available hai?
+    const qr = getClientQR(shop);
+    if (qr) {
+      const qrImage = await QRCode.toDataURL(qr);
+      return res.json({ success: true, status: "waiting_qr", qrCode: qrImage });
+    }
+
+    // Abhi start ho raha hai
+    res.json({ success: true, status: "starting" });
+  } catch (err) {
+    console.error("[WA] getQR:", err.message);
+    res.status(500).json({ success: false });
   }
 };
 
@@ -174,7 +192,8 @@ export const connectWhatsapp = async (req, res) => {
 ============================================================ */
 export const checkStatus = async (req, res) => {
   const shop = req.query.shop?.replace(/\/$/, "");
-  res.json({ success: true, status: getClientStatus(shop) });
+  const status = getClientStatus(shop);
+  res.json({ success: true, status });
 };
 
 /* ============================================================
@@ -192,7 +211,6 @@ export const disconnectWhatsapp = async (req, res) => {
 
 /* ============================================================
    SEND ORDER CONFIRMATION
-   wa.me clickable links ke saath
 ============================================================ */
 export const sendOrderConfirmation = async (shop, order) => {
   try {
@@ -216,16 +234,12 @@ export const sendOrderConfirmation = async (shop, order) => {
     ]
       .filter(Boolean)
       .join(", ");
-
-    // Order code — links mein embed hoga (e.g. 1001 from #1001)
     const orderCode = orderName.replace("#", "").trim();
 
-    // Store ka WhatsApp number — links mein use hoga
     const storeNumber = session.whatsappNumber
       ? formatWaNumber(session.whatsappNumber)
       : null;
 
-    // wa.me links banao
     const confirmLink = storeNumber
       ? `https://wa.me/${storeNumber}?text=CONFIRM-${orderCode}`
       : null;
@@ -236,7 +250,6 @@ export const sendOrderConfirmation = async (shop, order) => {
       ? `https://wa.me/${storeNumber}?text=CANCEL-${orderCode}`
       : null;
 
-    // Message build karo
     const template = session.messageTemplate || getDefaultTemplate();
     let message = buildMessage(template, {
       name,
@@ -246,7 +259,6 @@ export const sendOrderConfirmation = async (shop, order) => {
       address,
     });
 
-    // Agar store number available hai to links inject karo
     if (storeNumber) {
       message = message
         .replace("1️⃣ - Confirm Order", `✅ *Confirm Order:*\n${confirmLink}`)
@@ -280,7 +292,6 @@ export const sendTestMessage = async (req, res) => {
       phone,
       `✅ *ReleaseIt Test Message*\n\nYour WhatsApp automation is working! 🎉\n\nThis is a test from your Shopify store.`,
     );
-
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -289,7 +300,6 @@ export const sendTestMessage = async (req, res) => {
 
 /* ============================================================
    REGISTER MESSAGE HANDLER
-   CONFIRM-1001 / ADDRESS-1001 / CANCEL-1001 handle karo
 ============================================================ */
 export const registerMessageHandler = (shop) => {
   onMessage(shop, async ({ phone, text }) => {
@@ -297,16 +307,16 @@ export const registerMessageHandler = (shop) => {
       const msg = text.trim().toUpperCase();
 
       if (msg.startsWith("CONFIRM-")) {
-        const orderCode = msg.replace("CONFIRM-", "").trim();
-        await handleConfirm(shop, phone, orderCode);
+        await handleConfirm(shop, phone, msg.replace("CONFIRM-", "").trim());
       } else if (msg.startsWith("ADDRESS-")) {
-        const orderCode = msg.replace("ADDRESS-", "").trim();
-        await handleAddressRequest(shop, phone, orderCode);
+        await handleAddressRequest(
+          shop,
+          phone,
+          msg.replace("ADDRESS-", "").trim(),
+        );
       } else if (msg.startsWith("CANCEL-")) {
-        const orderCode = msg.replace("CANCEL-", "").trim();
-        await handleCancel(shop, phone, orderCode);
+        await handleCancel(shop, phone, msg.replace("CANCEL-", "").trim());
       } else {
-        // Free text — check karo kya address update pending hai
         await handleAddressReceived(shop, phone, text);
       }
     } catch (err) {
@@ -318,8 +328,6 @@ export const registerMessageHandler = (shop) => {
 /* ============================================================
    REPLY HANDLERS
 ============================================================ */
-
-// ✅ CONFIRM
 const handleConfirm = async (shop, phone, orderCode) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
   if (!order) {
@@ -330,7 +338,6 @@ const handleConfirm = async (shop, phone, orderCode) => {
     );
     return;
   }
-
   await shopifyReq(
     shop,
     shopData.accessToken,
@@ -343,7 +350,6 @@ const handleConfirm = async (shop, phone, orderCode) => {
       },
     },
   );
-
   await sendMessage(
     shop,
     phone,
@@ -352,10 +358,8 @@ const handleConfirm = async (shop, phone, orderCode) => {
   console.log(`[WA] ✅ Confirmed: ${order.name}`);
 };
 
-// 📍 ADDRESS REQUEST
 const handleAddressRequest = async (shop, phone, orderCode) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
-
   if (order) {
     await shopifyReq(
       shop,
@@ -370,7 +374,6 @@ const handleAddressRequest = async (shop, phone, orderCode) => {
       },
     );
   }
-
   await sendMessage(
     shop,
     phone,
@@ -378,7 +381,6 @@ const handleAddressRequest = async (shop, phone, orderCode) => {
   );
 };
 
-// 📍 ADDRESS RECEIVED (free text)
 const handleAddressReceived = async (shop, phone, newAddress) => {
   const shopData = await Shop.findOne({ shop });
   if (!shopData) return;
@@ -388,8 +390,8 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
     shopData.accessToken,
     "orders.json?status=open&limit=10",
   );
-
   const normalPhone = phone.replace(/\D/g, "");
+
   const order = data.orders?.find((o) => {
     const oPhone = (
       o.shipping_address?.phone ||
@@ -433,7 +435,6 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
   console.log(`[WA] ✅ Address updated: ${order.name}`);
 };
 
-// ❌ CANCEL
 const handleCancel = async (shop, phone, orderCode) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
   if (!order) {
@@ -444,7 +445,6 @@ const handleCancel = async (shop, phone, orderCode) => {
     );
     return;
   }
-
   await shopifyReq(
     shop,
     shopData.accessToken,
@@ -455,7 +455,6 @@ const handleCancel = async (shop, phone, orderCode) => {
       email: false,
     },
   );
-
   await sendMessage(
     shop,
     phone,
@@ -467,15 +466,12 @@ const handleCancel = async (shop, phone, orderCode) => {
 /* ============================================================
    HELPERS
 ============================================================ */
-
-// Order dhundo — pehle orderCode se, phir phone se
 const findOrder = async (shop, phone, orderCode) => {
   const shopData = await Shop.findOne({ shop });
   if (!shopData) return { shopData: null, order: null };
 
   const normalPhone = phone.replace(/\D/g, "");
 
-  // Pehle specific order code se dhundo
   if (orderCode) {
     const data = await shopifyReq(
       shop,
@@ -486,13 +482,11 @@ const findOrder = async (shop, phone, orderCode) => {
     if (order) return { shopData, order };
   }
 
-  // Fallback: phone se latest order dhundo
   const data = await shopifyReq(
     shop,
     shopData.accessToken,
     "orders.json?status=open&limit=10",
   );
-
   const order =
     data.orders?.find((o) => {
       const oPhone = (
@@ -522,9 +516,8 @@ const buildMessage = (template, vars) =>
     .replace(/{{total}}/g, vars.total)
     .replace(/{{address}}/g, vars.address);
 
-// WhatsApp number format: 923001234567 (no + no spaces)
 const formatWaNumber = (num) =>
-  num.replace(/\D/g, "").replace(/^0(\d{10})$/, "92$1"); // 03001234567 → 923001234567
+  num.replace(/\D/g, "").replace(/^0(\d{10})$/, "92$1");
 
 const getDefaultTemplate = () =>
   `🛍️ *New Order!*
