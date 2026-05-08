@@ -4,7 +4,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   isJidBroadcast,
-} from "@whiskeysockets/baileys";
+} from "baileys";
 
 import WhatsappSession from "../models/WhatsappSession.js";
 import pino from "pino";
