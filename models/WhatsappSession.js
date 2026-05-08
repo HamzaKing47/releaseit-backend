@@ -1,15 +1,15 @@
 import mongoose from "mongoose";
 
-// Baileys session data MongoDB mein store hoti hai
-// Restart ke baad automatically reconnect hota hai
 const whatsappSessionSchema = new mongoose.Schema({
   shop: { type: String, required: true, unique: true },
 
-  // Baileys session — creds.json ka content
+  // Baileys session data
   creds: { type: Object, default: null },
-
-  // Baileys keys store — Map ke instead Array use karte hain MongoDB ke liye
   keys: { type: Object, default: {} },
+
+  // Store ka WhatsApp number — wa.me links mein use hota hai
+  // Merchant dashboard mein enter karega (e.g. 923001234567)
+  whatsappNumber: { type: String, default: "" },
 
   // Connection status
   status: {
@@ -24,7 +24,6 @@ const whatsappSessionSchema = new mongoose.Schema({
   sendOnFulfillment: { type: Boolean, default: true },
   sendOnCancellation: { type: Boolean, default: false },
 
-  // Message template
   messageTemplate: {
     type: String,
     default: `🛍️ *New Order!*
@@ -36,8 +35,6 @@ Your order has been placed successfully.
 📦 *Order:* {{orderName}}
 💰 *Amount:* {{currency}} {{total}}
 📍 *Address:* {{address}}
-
-Please reply:
 
 1️⃣ - Confirm Order
 2️⃣ - Update Address
