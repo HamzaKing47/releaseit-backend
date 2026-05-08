@@ -12,7 +12,9 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
     "@shopify/shopify-api": "^13.0.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc10",
     "axios": "^1.15.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
@@ -20,6 +22,8 @@
     "mongoose": "^9.5.0",
     "node-fetch": "^3.3.2",
     "nodemon": "^3.1.14",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
     "react-router-dom": "^7.14.1"
   }
 }
