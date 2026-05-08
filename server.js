@@ -8,29 +8,32 @@ import app from "./app.js";
 import { shopify } from "./config/shopifyAuth.js";
 import Shop from "./models/Shop.js";
 import axios from "axios";
+import { reconnectAllShops } from "./services/baileyService.js";
+import { registerMessageHandler } from "./controllers/whatsappController.js";
 
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+  .then(async () => {
+    console.log("✅ MongoDB Connected");
+
+    // 🔥 Server restart pe sab connected shops reconnect ho jayein
+    await reconnectAllShops();
+  })
   .catch((err) => {
     console.error("❌ Mongo Error:", err.message);
-    process.exit(1); // crash clearly instead of silent fail
+    process.exit(1);
   });
 
 const server = express();
-
 server.set("trust proxy", 1);
-
 server.use(cors());
 server.use(express.json());
 
-// 🔥 AUTH START
+// AUTH START
 server.get("/auth", async (req, res) => {
   try {
     const shop = req.query.shop;
-
     if (!shop) return res.status(400).send("Missing shop");
-
     await shopify.auth.begin({
       shop,
       callbackPath: "/auth/callback",
@@ -40,13 +43,11 @@ server.get("/auth", async (req, res) => {
     });
   } catch (err) {
     console.error("AUTH ERROR:", err);
-    if (!res.headersSent) {
-      res.status(500).send("Auth start failed");
-    }
+    if (!res.headersSent) res.status(500).send("Auth start failed");
   }
 });
 
-// 🔥 AUTH CALLBACK
+// AUTH CALLBACK
 server.get("/auth/callback", async (req, res) => {
   try {
     const session = await shopify.auth.callback({
@@ -54,16 +55,11 @@ server.get("/auth/callback", async (req, res) => {
       rawResponse: res,
     });
 
-    console.log("🔥 FULL SESSION:", session); // 👈 DEBUG
-
-    // ✅ IMPORTANT FIX
     const shop = session.shop || session?.session?.shop;
     const accessToken = session.accessToken || session?.session?.accessToken;
 
-    if (!shop || !accessToken) {
-      console.log("❌ SHOP OR TOKEN MISSING");
+    if (!shop || !accessToken)
       return res.status(500).send("Shop or token missing");
-    }
 
     await Shop.findOneAndUpdate(
       { shop },
@@ -72,8 +68,6 @@ server.get("/auth/callback", async (req, res) => {
     );
 
     console.log("✅ STORE CONNECTED:", shop);
-    console.log("🔑 TOKEN:", accessToken);
-
     res.send("App Installed Successfully ✅");
   } catch (err) {
     console.error("CALLBACK ERROR:", err);
@@ -81,7 +75,7 @@ server.get("/auth/callback", async (req, res) => {
   }
 });
 
-// 🔥 API ROUTES
+// API ROUTES
 server.use(app);
 
 const port = process.env.PORT || 5000;
@@ -89,22 +83,17 @@ server.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
 });
 
-server.get("/test", (req, res) => {
-  res.send("AUTH ROUTE ACTIVE");
-});
+server.get("/test", (req, res) => res.send("AUTH ROUTE ACTIVE"));
 
 server.get("/", (req, res) => {
   const shop = req.query.shop;
-
   res.redirect(`https://releaseitnow.vercel.app/?shop=${shop}`);
 });
 
 server.get("/test-script", async (req, res) => {
   try {
     const shop = req.query.shop;
-
     const shopData = await Shop.findOne({ shop });
-
     const response = await axios.post(
       `https://${shop}/admin/api/2024-01/script_tags.json`,
       {
@@ -120,12 +109,9 @@ server.get("/test-script", async (req, res) => {
         },
       },
     );
-
     res.json(response.data);
   } catch (err) {
     console.error(err.response?.data || err.message);
-    res.status(500).json({
-      error: err.response?.data || err.message,
-    });
+    res.status(500).json({ error: err.response?.data || err.message });
   }
 });
