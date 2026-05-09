@@ -531,3 +531,35 @@ Hello {{name}}!
 1️⃣ - Confirm Order
 2️⃣ - Update Address
 3️⃣ - Cancel Order`;
+
+/* ============================================================
+   RESET SESSION — corrupt/old auth clear karo, fresh start
+============================================================ */
+export const resetSession = async (req, res) => {
+  try {
+    const { shop } = req.body;
+    if (!shop) return res.status(400).json({ success: false });
+
+    // Socket disconnect karo
+    const { disconnectClient } = await import("../services/baileyService.js");
+    try {
+      await disconnectClient(shop);
+    } catch {}
+
+    // DB mein authFiles bilkul clear karo
+    await WhatsappSession.findOneAndUpdate(
+      { shop },
+      { authFiles: {}, status: "disconnected", creds: null, keys: {} },
+      { upsert: true },
+    );
+
+    console.log(`[WA] ✅ Session reset for: ${shop}`);
+    res.json({
+      success: true,
+      message: "Session cleared. You can connect fresh now.",
+    });
+  } catch (err) {
+    console.error("[WA] Reset error:", err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};

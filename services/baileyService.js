@@ -39,7 +39,8 @@ const getAuthDir = (shop) => {
 const restoreAuthFromDB = async (shop) => {
   try {
     const doc = await WhatsappSession.findOne({ shop });
-    if (!doc?.authFiles) return false;
+    if (!doc?.authFiles || Object.keys(doc.authFiles).length === 0)
+      return false;
 
     const dir = getAuthDir(shop);
     for (const [filename, content] of Object.entries(doc.authFiles)) {
