@@ -174,7 +174,11 @@ export const getOrCreateClient = async (
 
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = code !== DisconnectReason.loggedOut;
+      const shouldReconnect =
+        code !== DisconnectReason.loggedOut &&
+        code !== 405 &&
+        code !== 401 &&
+        code !== 403;
       console.log(
         `[Baileys] Closed [${shop}] code: ${code}, reconnect: ${shouldReconnect}`,
       );
