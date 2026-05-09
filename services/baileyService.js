@@ -1,4 +1,9 @@
-import makeWASocket, { DisconnectReason, isJidBroadcast } from "baileys";
+// baileys ESM import — default export fix
+import baileys from "baileys";
+
+const makeWASocket = baileys.default || baileys;
+const DisconnectReason = baileys.DisconnectReason;
+const isJidBroadcast = baileys.isJidBroadcast;
 
 import WhatsappSession from "../models/WhatsappSession.js";
 import pino from "pino";
@@ -9,7 +14,7 @@ import pino from "pino";
 const clients = new Map();
 
 /* ============================================================
-   MONGODB AUTH STATE — simple version
+   MONGODB AUTH STATE
 ============================================================ */
 const useMongoAuthState = async (shop) => {
   let doc = (await WhatsappSession.findOne({ shop })) || {};
@@ -18,7 +23,7 @@ const useMongoAuthState = async (shop) => {
     await WhatsappSession.findOneAndUpdate(
       { shop },
       { creds, keys, updatedAt: new Date() },
-      { upsert: true, new: true },
+      { upsert: true },
     );
   };
 
@@ -49,8 +54,8 @@ const useMongoAuthState = async (shop) => {
     },
   };
 
-  const saveCreds = async (newCreds) => {
-    doc.creds = { ...(doc.creds || {}), ...newCreds };
+  const saveCreds = async (update) => {
+    doc.creds = { ...(doc.creds || {}), ...update };
     await saveAll(doc.creds, doc.keys || {});
   };
 
@@ -75,37 +80,24 @@ export const getOrCreateClient = async (
 
   console.log(`[Baileys] Starting client: ${shop}`);
 
-  let state, saveCreds;
-  try {
-    const auth = await useMongoAuthState(shop);
-    state = auth.state;
-    saveCreds = auth.saveCreds;
-    console.log(`[Baileys] Auth state loaded for: ${shop}`);
-  } catch (err) {
-    console.error(`[Baileys] Auth state error: ${err.message}`);
-    throw err;
-  }
+  const { state, saveCreds } = await useMongoAuthState(shop);
+  console.log(
+    `[Baileys] Auth loaded: ${shop}, creds keys: ${Object.keys(state.creds || {}).length}`,
+  );
 
-  let sock;
-  try {
-    sock = makeWASocket({
-      version: [2, 3000, 1015901307],
-      auth: state,
-      printQRInTerminal: true, // Server logs mein QR dikhega
-      logger: pino({ level: "warn" }),
-      browser: ["ReleaseIt", "Chrome", "1.0.0"],
-      syncFullHistory: false,
-      generateHighQualityLinkPreview: false,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 10000,
-    });
-    console.log(`[Baileys] Socket created for: ${shop}`);
-  } catch (err) {
-    console.error(`[Baileys] Socket creation error: ${err.message}`);
-    throw err;
-  }
+  const sock = makeWASocket({
+    version: [2, 3000, 1015901307],
+    auth: state,
+    printQRInTerminal: true,
+    logger: pino({ level: "warn" }),
+    browser: ["ReleaseIt", "Chrome", "1.0.0"],
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 15000,
+  });
 
+  console.log(`[Baileys] Socket created: ${shop}`);
   clients.set(shop, {
     socket: sock,
     status: "connecting",
@@ -113,37 +105,27 @@ export const getOrCreateClient = async (
     msgHandlers: [],
   });
 
-  sock.ev.on("creds.update", async (update) => {
-    try {
-      await saveCreds(update);
-    } catch (err) {
-      console.error(`[Baileys] creds.update error: ${err.message}`);
-    }
-  });
+  sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    console.log(
-      `[Baileys] connection.update for ${shop}:`,
-      JSON.stringify({ connection, qr: !!qr }),
-    );
+    console.log(`[Baileys] connection.update [${shop}]:`, {
+      connection,
+      hasQR: !!qr,
+    });
 
     if (qr) {
-      console.log(`[Baileys] ✅ QR generated for: ${shop}`);
+      console.log(`[Baileys] ✅ QR ready: ${shop}`);
       const client = clients.get(shop);
       if (client) {
         client.qrCode = qr;
         client.status = "waiting_qr";
       }
-      try {
-        await WhatsappSession.findOneAndUpdate(
-          { shop },
-          { status: "waiting_qr" },
-          { upsert: true },
-        );
-      } catch (err) {
-        console.error(`[Baileys] DB update error on QR: ${err.message}`);
-      }
+      await WhatsappSession.findOneAndUpdate(
+        { shop },
+        { status: "waiting_qr" },
+        { upsert: true },
+      );
       onQR?.(qr);
     }
 
@@ -154,41 +136,32 @@ export const getOrCreateClient = async (
         client.status = "connected";
         client.qrCode = null;
       }
-      try {
-        await WhatsappSession.findOneAndUpdate(
-          { shop },
-          { status: "connected" },
-          { upsert: true },
-        );
-      } catch (err) {
-        console.error(`[Baileys] DB update error on connect: ${err.message}`);
-      }
+      await WhatsappSession.findOneAndUpdate(
+        { shop },
+        { status: "connected" },
+        { upsert: true },
+      );
       onConnected?.();
     }
 
     if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      const code = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = code !== DisconnectReason.loggedOut;
       console.log(
-        `[Baileys] Closed. Code: ${statusCode}, reconnect: ${shouldReconnect}`,
+        `[Baileys] Closed [${shop}] code: ${code}, reconnect: ${shouldReconnect}`,
       );
 
       clients.delete(shop);
-      try {
-        await WhatsappSession.findOneAndUpdate(
-          { shop },
-          { status: "disconnected" },
-          { upsert: true },
-        );
-      } catch (err) {
-        console.error(`[Baileys] DB update error on close: ${err.message}`);
-      }
+      await WhatsappSession.findOneAndUpdate(
+        { shop },
+        { status: "disconnected" },
+        { upsert: true },
+      );
 
       if (shouldReconnect) {
-        console.log(`[Baileys] Reconnecting in 5s: ${shop}`);
         setTimeout(() => {
           getOrCreateClient(shop, onQR, onConnected, onDisconnected).catch(
-            (err) => console.error(`[Baileys] Reconnect error: ${err.message}`),
+            (e) => console.error(`[Baileys] Reconnect error: ${e.message}`),
           );
         }, 5000);
       } else {
@@ -207,25 +180,22 @@ export const getOrCreateClient = async (
     for (const msg of messages) {
       if (msg.key.fromMe) continue;
       if (isJidBroadcast(msg.key.remoteJid || "")) continue;
-
       const phone = msg.key.remoteJid?.replace("@s.whatsapp.net", "") || "";
       const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         "";
-
       if (!phone || !text) continue;
-      console.log(`[Baileys] Message from ${phone}: "${text}"`);
-
-      const client = clients.get(shop);
-      client?.msgHandlers?.forEach((h) => h({ phone, text: text.trim() }));
+      console.log(`[Baileys] Msg from ${phone}: "${text}"`);
+      clients
+        .get(shop)
+        ?.msgHandlers?.forEach((h) => h({ phone, text: text.trim() }));
     }
   });
 
   return sock;
 };
 
-/* ── EXPORTS ── */
 export const onMessage = (shop, handler) => {
   const client = clients.get(shop);
   if (!client) return;
@@ -242,23 +212,19 @@ export const sendMessage = async (shop, phone, text) => {
 
 export const getClientStatus = (shop) =>
   clients.get(shop)?.status || "disconnected";
-
 export const getClientQR = (shop) => clients.get(shop)?.qrCode || null;
 
 export const disconnectClient = async (shop) => {
   const client = clients.get(shop);
   try {
     if (client?.socket) await client.socket.logout();
-  } catch (err) {
-    console.error(`[Baileys] logout error: ${err.message}`);
-  }
+  } catch {}
   clients.delete(shop);
   await WhatsappSession.findOneAndUpdate(
     { shop },
     { creds: null, keys: {}, status: "disconnected" },
     { upsert: true },
   );
-  console.log(`[Baileys] Disconnected: ${shop}`);
 };
 
 export const reconnectAllShops = async () => {
@@ -268,23 +234,21 @@ export const reconnectAllShops = async () => {
       creds: { $ne: null },
     });
     console.log(`[Baileys] Reconnecting ${sessions.length} shop(s)...`);
-    for (const session of sessions) {
+    for (const s of sessions) {
       try {
         await getOrCreateClient(
-          session.shop,
+          s.shop,
           null,
-          () => console.log(`[Baileys] ✅ Reconnected: ${session.shop}`),
-          () => console.log(`[Baileys] ❌ Reconnect failed: ${session.shop}`),
+          () => console.log(`[Baileys] ✅ Reconnected: ${s.shop}`),
+          () => console.log(`[Baileys] ❌ Failed: ${s.shop}`),
         );
         await new Promise((r) => setTimeout(r, 1500));
-      } catch (err) {
-        console.error(
-          `[Baileys] Reconnect error ${session.shop}: ${err.message}`,
-        );
+      } catch (e) {
+        console.error(`[Baileys] Reconnect ${s.shop}: ${e.message}`);
       }
     }
-  } catch (err) {
-    console.error(`[Baileys] reconnectAllShops: ${err.message}`);
+  } catch (e) {
+    console.error(`[Baileys] reconnectAllShops: ${e.message}`);
   }
 };
 
