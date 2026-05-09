@@ -1,13 +1,22 @@
+/**
+ * baileyService.js
+ *
+ * Strategy: useMultiFileAuthState (baileys built-in) with /tmp folder
+ * /tmp mein auth files store hoti hain, MongoDB mein backup rehta hai
+ * Server restart pe MongoDB se /tmp restore karta hai
+ */
+
 import baileys from "baileys";
 
 const makeWASocket = baileys.default || baileys;
 const DisconnectReason = baileys.DisconnectReason;
 const isJidBroadcast = baileys.isJidBroadcast;
-const initAuthCreds = baileys.initAuthCreds;
-const BufferJSON = baileys.BufferJSON;
+const useMultiFileAuthState = baileys.useMultiFileAuthState;
 
 import WhatsappSession from "../models/WhatsappSession.js";
 import pino from "pino";
+import fs from "fs";
+import path from "path";
 
 /* ============================================================
    IN-MEMORY STORE
@@ -15,61 +24,62 @@ import pino from "pino";
 const clients = new Map();
 
 /* ============================================================
-   MONGODB AUTH STATE
-   initAuthCreds() se fresh creds generate hoti hain
-   agar pehli baar connect ho raha hai
+   AUTH DIR — har shop ka alag tmp folder
 ============================================================ */
-const useMongoAuthState = async (shop) => {
-  const doc = await WhatsappSession.findOne({ shop });
+const getAuthDir = (shop) => {
+  const dir = path.join("/tmp", "wa_auth", shop.replace(/\./g, "_"));
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+};
 
-  // Fresh creds — agar DB mein nahi hain
-  const creds = doc?.creds
-    ? JSON.parse(JSON.stringify(doc.creds), BufferJSON?.reviver)
-    : initAuthCreds();
+/* ============================================================
+   RESTORE AUTH FROM MONGODB TO /tmp
+   Server restart pe session restore karta hai
+============================================================ */
+const restoreAuthFromDB = async (shop) => {
+  try {
+    const doc = await WhatsappSession.findOne({ shop });
+    if (!doc?.authFiles) return false;
 
-  const keys = doc?.keys || {};
+    const dir = getAuthDir(shop);
+    for (const [filename, content] of Object.entries(doc.authFiles)) {
+      fs.writeFileSync(path.join(dir, filename), JSON.stringify(content));
+    }
+    console.log(`[Baileys] Auth restored from DB for: ${shop}`);
+    return true;
+  } catch (err) {
+    console.error(`[Baileys] Restore error: ${err.message}`);
+    return false;
+  }
+};
 
-  const saveAll = async (newCreds, newKeys) => {
+/* ============================================================
+   SAVE AUTH TO MONGODB
+   /tmp files ko MongoDB mein backup karta hai
+============================================================ */
+const saveAuthToDB = async (shop) => {
+  try {
+    const dir = getAuthDir(shop);
+    const authFiles = {};
+
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        try {
+          const content = fs.readFileSync(path.join(dir, file), "utf8");
+          authFiles[file] = JSON.parse(content);
+        } catch {}
+      }
+    }
+
     await WhatsappSession.findOneAndUpdate(
       { shop },
-      {
-        creds: JSON.parse(JSON.stringify(newCreds, BufferJSON?.replacer)),
-        keys: newKeys,
-        updatedAt: new Date(),
-      },
+      { authFiles, updatedAt: new Date() },
       { upsert: true },
     );
-  };
-
-  const state = {
-    creds,
-    keys: {
-      get: (type, ids) => {
-        const result = {};
-        for (const id of ids) {
-          const val = keys?.[type]?.[id];
-          if (val !== undefined) result[id] = val;
-        }
-        return result;
-      },
-      set: async (data) => {
-        for (const [type, typeData] of Object.entries(data)) {
-          keys[type] = keys[type] || {};
-          for (const [id, val] of Object.entries(typeData)) {
-            if (val) keys[type][id] = val;
-            else delete keys[type][id];
-          }
-        }
-        await saveAll(state.creds, keys);
-      },
-    },
-  };
-
-  const saveCreds = async () => {
-    await saveAll(state.creds, keys);
-  };
-
-  return { state, saveCreds };
+  } catch (err) {
+    console.error(`[Baileys] Save auth error: ${err.message}`);
+  }
 };
 
 /* ============================================================
@@ -90,15 +100,19 @@ export const getOrCreateClient = async (
 
   console.log(`[Baileys] Starting: ${shop}`);
 
-  const { state, saveCreds } = await useMongoAuthState(shop);
-  console.log(`[Baileys] Creds loaded for: ${shop}`);
+  // MongoDB se /tmp mein restore karo
+  await restoreAuthFromDB(shop);
+
+  const authDir = getAuthDir(shop);
+  console.log(`[Baileys] Auth dir: ${authDir}`);
+
+  // Baileys built-in auth state use karo
+  const { state, saveCreds } = await useMultiFileAuthState(authDir);
+  console.log(`[Baileys] Auth state loaded: ${shop}`);
 
   const sock = makeWASocket({
     version: [2, 3000, 1015901307],
-    auth: {
-      creds: state.creds,
-      keys: state.keys,
-    },
+    auth: state,
     printQRInTerminal: true,
     logger: pino({ level: "warn" }),
     browser: ["ReleaseIt", "Chrome", "1.0.0"],
@@ -116,9 +130,10 @@ export const getOrCreateClient = async (
     msgHandlers: [],
   });
 
-  // Creds update hone pe save karo
+  // Creds update hone pe save karo — both /tmp aur MongoDB
   sock.ev.on("creds.update", async () => {
     await saveCreds();
+    await saveAuthToDB(shop);
   });
 
   sock.ev.on("connection.update", async (update) => {
@@ -126,7 +141,7 @@ export const getOrCreateClient = async (
     console.log(`[Baileys] update [${shop}]:`, { connection, hasQR: !!qr });
 
     if (qr) {
-      console.log(`[Baileys] ✅ QR ready: ${shop}`);
+      console.log(`[Baileys] ✅ QR generated: ${shop}`);
       const client = clients.get(shop);
       if (client) {
         client.qrCode = qr;
@@ -147,6 +162,7 @@ export const getOrCreateClient = async (
         client.status = "connected";
         client.qrCode = null;
       }
+      await saveAuthToDB(shop);
       await WhatsappSession.findOneAndUpdate(
         { shop },
         { status: "connected" },
@@ -176,9 +192,14 @@ export const getOrCreateClient = async (
           );
         }, 5000);
       } else {
+        // Logged out — auth clear karo
+        const dir = getAuthDir(shop);
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch {}
         await WhatsappSession.findOneAndUpdate(
           { shop },
-          { creds: null, keys: {}, status: "disconnected" },
+          { authFiles: {}, status: "disconnected" },
           { upsert: true },
         );
         onDisconnected?.();
@@ -207,7 +228,6 @@ export const getOrCreateClient = async (
   return sock;
 };
 
-/* ── EXPORTS ── */
 export const onMessage = (shop, handler) => {
   const client = clients.get(shop);
   if (!client) return;
@@ -232,9 +252,15 @@ export const disconnectClient = async (shop) => {
     if (client?.socket) await client.socket.logout();
   } catch {}
   clients.delete(shop);
+
+  const dir = getAuthDir(shop);
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {}
+
   await WhatsappSession.findOneAndUpdate(
     { shop },
-    { creds: null, keys: {}, status: "disconnected" },
+    { authFiles: {}, status: "disconnected" },
     { upsert: true },
   );
   console.log(`[Baileys] Disconnected: ${shop}`);
@@ -244,7 +270,7 @@ export const reconnectAllShops = async () => {
   try {
     const sessions = await WhatsappSession.find({
       status: "connected",
-      creds: { $ne: null },
+      authFiles: { $exists: true, $ne: {} },
     });
     console.log(`[Baileys] Reconnecting ${sessions.length} shop(s)...`);
     for (const s of sessions) {

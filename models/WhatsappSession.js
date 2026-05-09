@@ -3,22 +3,18 @@ import mongoose from "mongoose";
 const whatsappSessionSchema = new mongoose.Schema({
   shop: { type: String, required: true, unique: true },
 
-  // Baileys session data
-  creds: { type: Object, default: null },
-  keys: { type: Object, default: {} },
+  // Baileys auth files — /tmp se MongoDB backup
+  authFiles: { type: Object, default: {} },
 
-  // Store ka WhatsApp number — wa.me links mein use hota hai
-  // Merchant dashboard mein enter karega (e.g. 923001234567)
+  // Store ka WhatsApp number
   whatsappNumber: { type: String, default: "" },
 
-  // Connection status
   status: {
     type: String,
     enum: ["disconnected", "connected", "connecting", "waiting_qr"],
     default: "disconnected",
   },
 
-  // Dashboard settings
   enabled: { type: Boolean, default: true },
   sendOnOrderCreate: { type: Boolean, default: true },
   sendOnFulfillment: { type: Boolean, default: true },
