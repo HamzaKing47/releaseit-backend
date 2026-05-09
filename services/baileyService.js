@@ -1,9 +1,10 @@
-// baileys ESM import — default export fix
 import baileys from "baileys";
 
 const makeWASocket = baileys.default || baileys;
 const DisconnectReason = baileys.DisconnectReason;
 const isJidBroadcast = baileys.isJidBroadcast;
+const initAuthCreds = baileys.initAuthCreds;
+const BufferJSON = baileys.BufferJSON;
 
 import WhatsappSession from "../models/WhatsappSession.js";
 import pino from "pino";
@@ -15,48 +16,57 @@ const clients = new Map();
 
 /* ============================================================
    MONGODB AUTH STATE
+   initAuthCreds() se fresh creds generate hoti hain
+   agar pehli baar connect ho raha hai
 ============================================================ */
 const useMongoAuthState = async (shop) => {
-  let doc = (await WhatsappSession.findOne({ shop })) || {};
+  const doc = await WhatsappSession.findOne({ shop });
 
-  const saveAll = async (creds, keys) => {
+  // Fresh creds — agar DB mein nahi hain
+  const creds = doc?.creds
+    ? JSON.parse(JSON.stringify(doc.creds), BufferJSON?.reviver)
+    : initAuthCreds();
+
+  const keys = doc?.keys || {};
+
+  const saveAll = async (newCreds, newKeys) => {
     await WhatsappSession.findOneAndUpdate(
       { shop },
-      { creds, keys, updatedAt: new Date() },
+      {
+        creds: JSON.parse(JSON.stringify(newCreds, BufferJSON?.replacer)),
+        keys: newKeys,
+        updatedAt: new Date(),
+      },
       { upsert: true },
     );
   };
 
   const state = {
-    creds: doc.creds || {},
+    creds,
     keys: {
       get: (type, ids) => {
         const result = {};
-        const store = doc.keys || {};
         for (const id of ids) {
-          const val = store?.[type]?.[id];
+          const val = keys?.[type]?.[id];
           if (val !== undefined) result[id] = val;
         }
         return result;
       },
       set: async (data) => {
-        const store = { ...(doc.keys || {}) };
         for (const [type, typeData] of Object.entries(data)) {
-          store[type] = store[type] || {};
+          keys[type] = keys[type] || {};
           for (const [id, val] of Object.entries(typeData)) {
-            if (val) store[type][id] = val;
-            else delete store[type][id];
+            if (val) keys[type][id] = val;
+            else delete keys[type][id];
           }
         }
-        doc.keys = store;
-        await saveAll(doc.creds || {}, store);
+        await saveAll(state.creds, keys);
       },
     },
   };
 
-  const saveCreds = async (update) => {
-    doc.creds = { ...(doc.creds || {}), ...update };
-    await saveAll(doc.creds, doc.keys || {});
+  const saveCreds = async () => {
+    await saveAll(state.creds, keys);
   };
 
   return { state, saveCreds };
@@ -78,16 +88,17 @@ export const getOrCreateClient = async (
     return existing.socket;
   }
 
-  console.log(`[Baileys] Starting client: ${shop}`);
+  console.log(`[Baileys] Starting: ${shop}`);
 
   const { state, saveCreds } = await useMongoAuthState(shop);
-  console.log(
-    `[Baileys] Auth loaded: ${shop}, creds keys: ${Object.keys(state.creds || {}).length}`,
-  );
+  console.log(`[Baileys] Creds loaded for: ${shop}`);
 
   const sock = makeWASocket({
     version: [2, 3000, 1015901307],
-    auth: state,
+    auth: {
+      creds: state.creds,
+      keys: state.keys,
+    },
     printQRInTerminal: true,
     logger: pino({ level: "warn" }),
     browser: ["ReleaseIt", "Chrome", "1.0.0"],
@@ -105,14 +116,14 @@ export const getOrCreateClient = async (
     msgHandlers: [],
   });
 
-  sock.ev.on("creds.update", saveCreds);
+  // Creds update hone pe save karo
+  sock.ev.on("creds.update", async () => {
+    await saveCreds();
+  });
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    console.log(`[Baileys] connection.update [${shop}]:`, {
-      connection,
-      hasQR: !!qr,
-    });
+    console.log(`[Baileys] update [${shop}]:`, { connection, hasQR: !!qr });
 
     if (qr) {
       console.log(`[Baileys] ✅ QR ready: ${shop}`);
@@ -161,7 +172,7 @@ export const getOrCreateClient = async (
       if (shouldReconnect) {
         setTimeout(() => {
           getOrCreateClient(shop, onQR, onConnected, onDisconnected).catch(
-            (e) => console.error(`[Baileys] Reconnect error: ${e.message}`),
+            (e) => console.error(`[Baileys] Reconnect err: ${e.message}`),
           );
         }, 5000);
       } else {
@@ -196,6 +207,7 @@ export const getOrCreateClient = async (
   return sock;
 };
 
+/* ── EXPORTS ── */
 export const onMessage = (shop, handler) => {
   const client = clients.get(shop);
   if (!client) return;
@@ -225,6 +237,7 @@ export const disconnectClient = async (shop) => {
     { creds: null, keys: {}, status: "disconnected" },
     { upsert: true },
   );
+  console.log(`[Baileys] Disconnected: ${shop}`);
 };
 
 export const reconnectAllShops = async () => {
@@ -244,11 +257,11 @@ export const reconnectAllShops = async () => {
         );
         await new Promise((r) => setTimeout(r, 1500));
       } catch (e) {
-        console.error(`[Baileys] Reconnect ${s.shop}: ${e.message}`);
+        console.error(`[Baileys] ${s.shop}: ${e.message}`);
       }
     }
   } catch (e) {
-    console.error(`[Baileys] reconnectAllShops: ${e.message}`);
+    console.error(`[Baileys] reconnectAll: ${e.message}`);
   }
 };
 
