@@ -15,7 +15,7 @@
     "@hapi/boom": "^10.0.1",
     "@shopify/shopify-api": "^13.0.0",
     "axios": "^1.15.0",
-    "baileys": "^7.0.0-rc10",
+    "baileys": "^6.7.16",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
     "express": "^5.2.1",
