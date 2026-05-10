@@ -112,7 +112,7 @@ export const getOrCreateClient = async (
   console.log(`[Baileys] Auth state loaded: ${shop}`);
 
   const sock = makeWASocket({
-    version: [2, 3000, 1015901307],
+    version: [2, 3000, 1027934701],
     auth: state,
     printQRInTerminal: true,
     logger: pino({ level: "warn" }),
