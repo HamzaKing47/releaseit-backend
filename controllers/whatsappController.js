@@ -1,20 +1,23 @@
 import WhatsappSession from "../models/WhatsappSession.js";
 import Shop from "../models/Shop.js";
 import {
-  getOrCreateClient,
-  sendMessage,
-  getClientStatus,
-  getClientQR,
-  disconnectClient,
-  onMessage,
-} from "../services/baileyService.js";
+  startSession,
+  deleteSession,
+  getSessionStatus,
+  getQRImage,
+  sendTextMessage,
+  setWebhook,
+  formatWaNumber,
+  getSessionName,
+} from "../services/wahaService.js";
 import fetch from "node-fetch";
-import QRCode from "qrcode";
 
+const BACKEND_URL =
+  process.env.BACKEND_URL || "https://releaseit-backend.onrender.com";
 const SHOPIFY_API_VERSION = "2024-01";
 
 /* ============================================================
-   SHOPIFY API HELPER
+   SHOPIFY HELPER
 ============================================================ */
 const shopifyReq = async (
   shop,
@@ -46,11 +49,26 @@ export const getWhatsappSettings = async (req, res) => {
     if (!shop) return res.status(400).json({ success: false });
 
     const session = await WhatsappSession.findOne({ shop });
-    const liveStatus = getClientStatus(shop);
+    const waStatus = await getSessionStatus(shop);
+
+    // WAHA status → our status
+    const statusMap = {
+      WORKING: "connected",
+      SCAN_QR_CODE: "waiting_qr",
+      STARTING: "connecting",
+      STOPPED: "disconnected",
+      FAILED: "disconnected",
+    };
+    const status = statusMap[waStatus] || "disconnected";
+
+    // Sync DB status
+    if (session && session.status !== status) {
+      await WhatsappSession.findOneAndUpdate({ shop }, { status });
+    }
 
     res.json({
       success: true,
-      status: liveStatus,
+      status,
       whatsappNumber: session?.whatsappNumber || "",
       enabled: session?.enabled ?? true,
       sendOnOrderCreate: session?.sendOnOrderCreate ?? true,
@@ -91,9 +109,8 @@ export const saveWhatsappSettings = async (req, res) => {
         messageTemplate: messageTemplate || "",
         updatedAt: new Date(),
       },
-      { upsert: true, new: true },
+      { upsert: true },
     );
-
     res.json({ success: true });
   } catch (err) {
     console.error("[WA] saveSettings:", err.message);
@@ -102,8 +119,7 @@ export const saveWhatsappSettings = async (req, res) => {
 };
 
 /* ============================================================
-   CONNECT — Async start karo, immediately return karo
-   Frontend polling se QR fetch karega
+   CONNECT — WAHA session start karo
 ============================================================ */
 export const connectWhatsapp = async (req, res) => {
   try {
@@ -111,44 +127,24 @@ export const connectWhatsapp = async (req, res) => {
     if (!shop) return res.status(400).json({ success: false });
 
     // Already connected?
-    if (getClientStatus(shop) === "connected") {
+    const waStatus = await getSessionStatus(shop);
+    if (waStatus === "WORKING") {
       return res.json({ success: true, status: "connected" });
     }
 
-    // QR already ready hai?
-    const existingQR = getClientQR(shop);
-    if (existingQR) {
-      const qrImage = await QRCode.toDataURL(existingQR);
-      return res.json({ success: true, status: "waiting_qr", qrCode: qrImage });
-    }
+    // Session start karo
+    await startSession(shop);
 
-    // Status update karo
+    // Webhook set karo
+    const webhookUrl = `${BACKEND_URL}/api/whatsapp/webhook`;
+    await setWebhook(shop, webhookUrl);
+
     await WhatsappSession.findOneAndUpdate(
       { shop },
       { status: "connecting" },
       { upsert: true },
     );
 
-    // Baileys ko BACKGROUND mein start karo — await mat karo
-    // Ye immediately return karega, frontend polling karega
-    getOrCreateClient(
-      shop,
-      async (qr) => {
-        console.log(`[WA] QR ready for: ${shop}`);
-        // QR memory mein save hai (baileyService mein)
-      },
-      () => {
-        console.log(`[WA] Connected: ${shop}`);
-        registerMessageHandler(shop);
-      },
-      () => {
-        console.log(`[WA] Disconnected: ${shop}`);
-      },
-    ).catch((err) => {
-      console.error(`[WA] Client start error for ${shop}:`, err.message);
-    });
-
-    // Immediately respond — "starting" state
     res.json({ success: true, status: "starting" });
   } catch (err) {
     console.error("[WA] Connect:", err.message);
@@ -157,29 +153,41 @@ export const connectWhatsapp = async (req, res) => {
 };
 
 /* ============================================================
-   GET QR — Frontend ye poll karega
-   Har 3 second mein call hoga
+   GET QR — frontend poll karega
 ============================================================ */
 export const getQRCode = async (req, res) => {
   try {
     const shop = req.query.shop?.replace(/\/$/, "");
     if (!shop) return res.status(400).json({ success: false });
 
-    const liveStatus = getClientStatus(shop);
+    const waStatus = await getSessionStatus(shop);
+    console.log(`[WA] QR poll — WAHA status: ${waStatus}`);
 
-    // Connected ho gaya?
-    if (liveStatus === "connected") {
+    if (waStatus === "WORKING") {
+      await WhatsappSession.findOneAndUpdate(
+        { shop },
+        { status: "connected" },
+        { upsert: true },
+      );
       return res.json({ success: true, status: "connected" });
     }
 
-    // QR available hai?
-    const qr = getClientQR(shop);
-    if (qr) {
-      const qrImage = await QRCode.toDataURL(qr);
-      return res.json({ success: true, status: "waiting_qr", qrCode: qrImage });
+    if (waStatus === "SCAN_QR_CODE") {
+      const qrImage = await getQRImage(shop);
+      if (qrImage) {
+        await WhatsappSession.findOneAndUpdate(
+          { shop },
+          { status: "waiting_qr" },
+          { upsert: true },
+        );
+        return res.json({
+          success: true,
+          status: "waiting_qr",
+          qrCode: qrImage,
+        });
+      }
     }
 
-    // Abhi start ho raha hai
     res.json({ success: true, status: "starting" });
   } catch (err) {
     console.error("[WA] getQR:", err.message);
@@ -191,9 +199,20 @@ export const getQRCode = async (req, res) => {
    CHECK STATUS
 ============================================================ */
 export const checkStatus = async (req, res) => {
-  const shop = req.query.shop?.replace(/\/$/, "");
-  const status = getClientStatus(shop);
-  res.json({ success: true, status });
+  try {
+    const shop = req.query.shop?.replace(/\/$/, "");
+    const waStatus = await getSessionStatus(shop);
+    const statusMap = {
+      WORKING: "connected",
+      SCAN_QR_CODE: "waiting_qr",
+      STARTING: "connecting",
+      STOPPED: "disconnected",
+      FAILED: "disconnected",
+    };
+    res.json({ success: true, status: statusMap[waStatus] || "disconnected" });
+  } catch {
+    res.json({ success: true, status: "disconnected" });
+  }
 };
 
 /* ============================================================
@@ -202,10 +221,64 @@ export const checkStatus = async (req, res) => {
 export const disconnectWhatsapp = async (req, res) => {
   try {
     const { shop } = req.body;
-    await disconnectClient(shop);
+    await deleteSession(shop);
+    await WhatsappSession.findOneAndUpdate(
+      { shop },
+      { status: "disconnected" },
+      { upsert: true },
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false });
+  }
+};
+
+/* ============================================================
+   WEBHOOK — WAHA se incoming messages
+============================================================ */
+export const handleWebhook = async (req, res) => {
+  res.status(200).json({ received: true });
+
+  try {
+    const body = req.body;
+    // WAHA webhook format
+    const event = body.event;
+    const payload = body.payload;
+    const session = body.session; // shop ka session name
+
+    if (event !== "message") return;
+
+    // Session name se shop dhundo
+    const sessionDoc = await WhatsappSession.findOne({});
+    const allSessions = await WhatsappSession.find({});
+    const shopDoc = allSessions.find((s) => getSessionName(s.shop) === session);
+
+    if (!shopDoc) {
+      console.log(`[WA] No shop found for session: ${session}`);
+      return;
+    }
+
+    const shop = shopDoc.shop;
+    const phone = payload?.from?.replace("@c.us", "") || "";
+    const text = payload?.body?.trim() || "";
+
+    if (!phone || !text) return;
+    console.log(`[WA] Message [${shop}] from ${phone}: "${text}"`);
+
+    const msg = text.toUpperCase();
+    if (msg.startsWith("CONFIRM-"))
+      await handleConfirm(shop, phone, msg.replace("CONFIRM-", "").trim());
+    else if (msg.startsWith("ADDRESS-"))
+      await handleAddressRequest(
+        shop,
+        phone,
+        msg.replace("ADDRESS-", "").trim(),
+      );
+    else if (msg.startsWith("CANCEL-"))
+      await handleCancel(shop, phone, msg.replace("CANCEL-", "").trim());
+    else await handleAddressReceived(shop, phone, text);
+  } catch (err) {
+    console.error("[WA] Webhook error:", err.message);
   }
 };
 
@@ -216,7 +289,9 @@ export const sendOrderConfirmation = async (shop, order) => {
   try {
     const session = await WhatsappSession.findOne({ shop });
     if (!session?.enabled || !session?.sendOnOrderCreate) return;
-    if (getClientStatus(shop) !== "connected") return;
+
+    const waStatus = await getSessionStatus(shop);
+    if (waStatus !== "WORKING") return;
 
     const phone = order.shipping_address?.phone || order.customer?.phone;
     if (!phone) return;
@@ -266,7 +341,7 @@ export const sendOrderConfirmation = async (shop, order) => {
         .replace("3️⃣ - Cancel Order", `❌ *Cancel Order:*\n${cancelLink}`);
     }
 
-    await sendMessage(shop, phone, message);
+    await sendTextMessage(shop, phone, message);
     console.log(`[WA] ✅ Order confirmation sent: ${order.name}`);
   } catch (err) {
     console.error("[WA] sendOrderConfirmation:", err.message);
@@ -281,13 +356,14 @@ export const sendTestMessage = async (req, res) => {
     const { shop, phone } = req.body;
     if (!shop || !phone) return res.status(400).json({ success: false });
 
-    if (getClientStatus(shop) !== "connected") {
+    const waStatus = await getSessionStatus(shop);
+    if (waStatus !== "WORKING") {
       return res
         .status(400)
         .json({ success: false, message: "WhatsApp not connected" });
     }
 
-    await sendMessage(
+    await sendTextMessage(
       shop,
       phone,
       `✅ *ReleaseIt Test Message*\n\nYour WhatsApp automation is working! 🎉\n\nThis is a test from your Shopify store.`,
@@ -299,39 +375,12 @@ export const sendTestMessage = async (req, res) => {
 };
 
 /* ============================================================
-   REGISTER MESSAGE HANDLER
-============================================================ */
-export const registerMessageHandler = (shop) => {
-  onMessage(shop, async ({ phone, text }) => {
-    try {
-      const msg = text.trim().toUpperCase();
-
-      if (msg.startsWith("CONFIRM-")) {
-        await handleConfirm(shop, phone, msg.replace("CONFIRM-", "").trim());
-      } else if (msg.startsWith("ADDRESS-")) {
-        await handleAddressRequest(
-          shop,
-          phone,
-          msg.replace("ADDRESS-", "").trim(),
-        );
-      } else if (msg.startsWith("CANCEL-")) {
-        await handleCancel(shop, phone, msg.replace("CANCEL-", "").trim());
-      } else {
-        await handleAddressReceived(shop, phone, text);
-      }
-    } catch (err) {
-      console.error("[WA] Message handler:", err.message);
-    }
-  });
-};
-
-/* ============================================================
    REPLY HANDLERS
 ============================================================ */
 const handleConfirm = async (shop, phone, orderCode) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
   if (!order) {
-    await sendMessage(
+    await sendTextMessage(
       shop,
       phone,
       "❌ Order not found. Please contact support.",
@@ -350,7 +399,7 @@ const handleConfirm = async (shop, phone, orderCode) => {
       },
     },
   );
-  await sendMessage(
+  await sendTextMessage(
     shop,
     phone,
     `✅ *Order Confirmed!*\n\nThank you! Your order *${order.name}* is confirmed.\n\nWe will dispatch it soon. 🚚`,
@@ -374,7 +423,7 @@ const handleAddressRequest = async (shop, phone, orderCode) => {
       },
     );
   }
-  await sendMessage(
+  await sendTextMessage(
     shop,
     phone,
     `📍 *Update Delivery Address*\n\nPlease type your new complete address and send it.\n\n_Example: House 12, Street 4, Block B, Lahore_`,
@@ -391,7 +440,6 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
     "orders.json?status=open&limit=10",
   );
   const normalPhone = phone.replace(/\D/g, "");
-
   const order = data.orders?.find((o) => {
     const oPhone = (
       o.shipping_address?.phone ||
@@ -403,7 +451,6 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
       o.tags?.includes("Pending Address Update")
     );
   });
-
   if (!order) return;
 
   const cleanedTags = order.tags
@@ -426,19 +473,17 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
       },
     },
   );
-
-  await sendMessage(
+  await sendTextMessage(
     shop,
     phone,
-    `✅ *Address Updated!*\n\nNew address saved:\n📍 _${newAddress}_\n\nYour order *${order.name}* is confirmed! 🎉`,
+    `✅ *Address Updated!*\n\nNew address:\n📍 _${newAddress}_\n\nYour order *${order.name}* is confirmed! 🎉`,
   );
-  console.log(`[WA] ✅ Address updated: ${order.name}`);
 };
 
 const handleCancel = async (shop, phone, orderCode) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
   if (!order) {
-    await sendMessage(
+    await sendTextMessage(
       shop,
       phone,
       "❌ Order not found. Please contact support.",
@@ -450,17 +495,13 @@ const handleCancel = async (shop, phone, orderCode) => {
     shopData.accessToken,
     `orders/${order.id}/cancel.json`,
     "POST",
-    {
-      reason: "customer",
-      email: false,
-    },
+    { reason: "customer", email: false },
   );
-  await sendMessage(
+  await sendTextMessage(
     shop,
     phone,
-    `❌ *Order Cancelled*\n\nYour order *${order.name}* has been cancelled.\n\nFeel free to order again anytime! 🛍️`,
+    `❌ *Order Cancelled*\n\nYour order *${order.name}* has been cancelled.\n\nFeel free to order again! 🛍️`,
   );
-  console.log(`[WA] ✅ Cancelled: ${order.name}`);
 };
 
 /* ============================================================
@@ -478,8 +519,7 @@ const findOrder = async (shop, phone, orderCode) => {
       shopData.accessToken,
       `orders.json?name=%23${orderCode}&status=open`,
     );
-    const order = data.orders?.[0] || null;
-    if (order) return { shopData, order };
+    if (data.orders?.[0]) return { shopData, order: data.orders[0] };
   }
 
   const data = await shopifyReq(
@@ -496,7 +536,6 @@ const findOrder = async (shop, phone, orderCode) => {
       ).replace(/\D/g, "");
       return oPhone.slice(-10) === normalPhone.slice(-10);
     }) || null;
-
   return { shopData, order };
 };
 
@@ -516,9 +555,6 @@ const buildMessage = (template, vars) =>
     .replace(/{{total}}/g, vars.total)
     .replace(/{{address}}/g, vars.address);
 
-const formatWaNumber = (num) =>
-  num.replace(/\D/g, "").replace(/^0(\d{10})$/, "92$1");
-
 const getDefaultTemplate = () =>
   `🛍️ *New Order!*
 
@@ -531,35 +567,3 @@ Hello {{name}}!
 1️⃣ - Confirm Order
 2️⃣ - Update Address
 3️⃣ - Cancel Order`;
-
-/* ============================================================
-   RESET SESSION — corrupt/old auth clear karo, fresh start
-============================================================ */
-export const resetSession = async (req, res) => {
-  try {
-    const { shop } = req.body;
-    if (!shop) return res.status(400).json({ success: false });
-
-    // Socket disconnect karo
-    const { disconnectClient } = await import("../services/baileyService.js");
-    try {
-      await disconnectClient(shop);
-    } catch {}
-
-    // DB mein authFiles bilkul clear karo
-    await WhatsappSession.findOneAndUpdate(
-      { shop },
-      { authFiles: {}, status: "disconnected", creds: null, keys: {} },
-      { upsert: true },
-    );
-
-    console.log(`[WA] ✅ Session reset for: ${shop}`);
-    res.json({
-      success: true,
-      message: "Session cleared. You can connect fresh now.",
-    });
-  } catch (err) {
-    console.error("[WA] Reset error:", err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
