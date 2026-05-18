@@ -20,6 +20,21 @@ const whatsappSessionSchema = new mongoose.Schema({
   sendOnFulfillment: { type: Boolean, default: true },
   sendOnCancellation: { type: Boolean, default: false },
 
+  // ── Plan & message usage (tiered pricing like WhatFlow) ──
+  plan: {
+    type: String,
+    enum: ["free", "starter", "growth", "pro"],
+    default: "free",
+  },
+  messageLimit: { type: Number, default: 50 }, // messages allowed per 30-day cycle
+  messagesSent: { type: Number, default: 0 }, // messages sent in current cycle
+  cycleStartDate: { type: Date, default: Date.now }, // when current cycle began
+
+  // ── Daily cap + warm-up (protects the WhatsApp number from bans) ──
+  dailySent: { type: Number, default: 0 }, // messages sent today
+  dailyResetDate: { type: Date, default: Date.now }, // start of the current day-window
+  numberConnectedDate: { type: Date, default: null }, // when the WA number first connected — drives warm-up ramp
+
   messageTemplate: {
     type: String,
     default: `🛍️ *New Order!*

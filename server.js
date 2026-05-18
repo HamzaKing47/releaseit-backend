@@ -11,7 +11,22 @@ import axios from "axios";
 
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+  .then(async () => {
+    console.log("✅ MongoDB Connected");
+    // Resume previously-connected WhatsApp shops AND re-register their
+    // message handlers — so incoming CONFIRM/CANCEL/ADDRESS replies keep
+    // working after a server restart.
+    try {
+      const { resumeConnectedShops } = await import(
+        "./controllers/whatsappController.js"
+      );
+      resumeConnectedShops().catch((e) =>
+        console.error("[WA] resume err:", e.message),
+      );
+    } catch (e) {
+      console.warn("[WA] Resume skipped:", e.message);
+    }
+  })
   .catch((err) => {
     console.error("❌ Mongo Error:", err.message);
     process.exit(1);

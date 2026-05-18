@@ -1,0 +1,14 @@
+app = "releaseit-waha"
+primary_region = "iad"
+
+[build]
+  image = "devlikeapro/waha"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
