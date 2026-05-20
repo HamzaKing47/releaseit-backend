@@ -1,22 +1,33 @@
 /* ──────────────────────────────────────────────────────────────
-   Shopify Billing — Recurring Application Charges
+   Shopify Billing — MANAGED PRICING
+
+   Why managed pricing (not the charge-creation API):
+   Apps created in Shopify's new Dev Dashboard issue *expiring* offline
+   tokens, and the legacy non-expiring tokens are rejected by the Admin
+   API. Creating charges via the API therefore fails. Shopify's
+   recommended modern approach is "Managed Pricing": you configure the
+   plans in the Partner Dashboard, Shopify hosts the secure pricing /
+   checkout page, and tells us about plan changes via a webhook. No
+   token, no charge-creation API call needed from us.
 
    Flow:
-     1. Merchant clicks "Upgrade" on the frontend pricing page.
-     2. POST /api/billing/subscribe  → we create a recurring charge
-        via the Shopify Admin API and return its confirmation_url.
-     3. Frontend redirects the merchant to confirmation_url.
-     4. Merchant approves on Shopify → Shopify redirects them back
-        to GET /api/billing/callback?charge_id=...&shop=...
-     5. We activate the charge, set the shop's plan, redirect to
-        the admin panel with ?upgraded=1.
+     1. Merchant clicks "Upgrade" → POST /api/billing/subscribe.
+     2. We return Shopify's hosted managed-pricing URL.
+     3. Frontend redirects merchant there; they pick & approve a plan
+        on Shopify's own page (test charge in dev — no real money).
+     4. Shopify fires an `app_subscriptions/update` webhook →
+        POST /api/billing/webhook → we update the shop's plan in Mongo.
+     5. Our app reads the plan from our own DB (never needs the token).
    ────────────────────────────────────────────────────────────── */
 
 import Shop from "../models/Shop.js";
-import fetch from "node-fetch";
 import { setPlan, PLAN_LIMITS } from "../services/messageUsage.js";
 
 const API_VERSION = "2024-01";
+
+// The app's handle (slug) — used to build the managed-pricing URL.
+// Find it in your Partner Dashboard app URL, e.g. ".../apps/<handle>".
+const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || "releaseit-plus";
 
 // Plan catalog — single source of truth for prices and display info.
 export const PLANS = {
@@ -71,99 +82,31 @@ export const getPlans = (req, res) => {
 
 /* ── POST /api/billing/subscribe ──
    Body: { shop, plan }
-   Returns: { success, confirmationUrl } */
+   Returns: { success, confirmationUrl } → Shopify's hosted managed-pricing page.
+   No Admin API call, no token needed — avoids the expiring-token issue. */
 export const createSubscription = async (req, res) => {
   try {
     const { shop, plan } = req.body;
-    if (!shop || !plan) {
-      return res
-        .status(400)
-        .json({ success: false, message: "shop and plan required" });
-    }
-    const planDef = PLANS[plan];
-    if (!planDef) {
-      return res.status(400).json({ success: false, message: "Unknown plan" });
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "shop required" });
     }
 
     // Free plan → no charge needed, just update locally.
-    if (planDef.key === "free" || planDef.price === 0) {
+    if (plan === "free") {
       await setPlan(shop, "free");
       return res.json({
         success: true,
-        confirmationUrl: `${FRONTEND_URL}/admin?shop=${shop}&upgraded=1`,
+        confirmationUrl: `${FRONTEND_URL}/admin?shop=${shop}&upgraded=free`,
       });
     }
 
-    const shopData = await Shop.findOne({ shop });
-    if (!shopData) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Shop not installed" });
-    }
+    // Send the merchant to Shopify's hosted managed-pricing page, where
+    // they pick & approve a plan. Shopify then fires the
+    // app_subscriptions/update webhook back to us.
+    const storeHandle = shop.replace(".myshopify.com", "");
+    const managedPricingUrl = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
 
-    const returnUrl =
-      `${BACKEND_URL}/api/billing/callback?shop=${encodeURIComponent(shop)}` +
-      `&plan=${encodeURIComponent(plan)}`;
-
-    // GraphQL App Subscriptions API — the modern billing method.
-    // (Legacy REST recurring_application_charges fails for apps created
-    // in the new Shopify Dev Dashboard with an "owned by a Shop" error.)
-    const query = `
-      mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean!, $price: Decimal!) {
-        appSubscriptionCreate(
-          name: $name,
-          returnUrl: $returnUrl,
-          test: $test,
-          lineItems: [{
-            plan: {
-              appRecurringPricingDetails: {
-                price: { amount: $price, currencyCode: USD },
-                interval: EVERY_30_DAYS
-              }
-            }
-          }]
-        ) {
-          confirmationUrl
-          appSubscription { id }
-          userErrors { field message }
-        }
-      }`;
-
-    const variables = {
-      name: `ReleaseIt — ${planDef.name} Plan`,
-      returnUrl,
-      test: IS_TEST,
-      price: planDef.price,
-    };
-
-    const r = await fetch(
-      `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
-      {
-        method: "POST",
-        headers: {
-          "X-Shopify-Access-Token": shopData.accessToken,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query, variables }),
-      },
-    );
-    const data = await r.json();
-    const result = data?.data?.appSubscriptionCreate;
-
-    if (result?.userErrors?.length) {
-      console.error("[Billing] GraphQL userErrors:", result.userErrors);
-      return res
-        .status(500)
-        .json({ success: false, message: result.userErrors[0].message });
-    }
-    if (!result?.confirmationUrl) {
-      console.error("[Billing] create charge failed:", JSON.stringify(data));
-      return res
-        .status(500)
-        .json({ success: false, message: "Could not create charge" });
-    }
-
-    return res.json({ success: true, confirmationUrl: result.confirmationUrl });
+    return res.json({ success: true, confirmationUrl: managedPricingUrl });
   } catch (err) {
     console.error("[Billing] subscribe error:", err.message);
     res.status(500).json({ success: false, message: err.message });
@@ -171,127 +114,73 @@ export const createSubscription = async (req, res) => {
 };
 
 /* ── GET /api/billing/callback ──
-   Shopify redirects the merchant here after they approve the charge.
-   Query: shop, plan, charge_id */
+   Managed pricing returns the merchant to our App URL, not here, so this
+   is a lightweight safety net if Shopify ever redirects with params. */
 export const activateSubscription = async (req, res) => {
-  try {
-    const shop = req.query.shop;
-    const plan = req.query.plan;
-    const chargeId = req.query.charge_id;
-    if (!shop || !plan) {
-      return res.status(400).send("Missing shop / plan");
-    }
-
-    const shopData = await Shop.findOne({ shop });
-    if (!shopData) return res.status(404).send("Shop not found");
-
-    // With the GraphQL App Subscriptions API, the subscription is ACTIVE as
-    // soon as the merchant approves on Shopify's screen. Verify the active
-    // subscription exists, then persist the plan on our side.
-    let isActive = false;
+  const shop = req.query.shop;
+  const plan = req.query.plan;
+  if (shop && plan && PLANS[plan]) {
     try {
-      const query = `{
-        currentAppInstallation {
-          activeSubscriptions { id name status }
-        }
-      }`;
-      const r = await fetch(
-        `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
-        {
-          method: "POST",
-          headers: {
-            "X-Shopify-Access-Token": shopData.accessToken,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ query }),
-        },
-      );
-      const data = await r.json();
-      const subs =
-        data?.data?.currentAppInstallation?.activeSubscriptions || [];
-      isActive = subs.some((s) => s.status === "ACTIVE");
+      await setPlan(shop, plan, true);
     } catch (e) {
-      console.warn("[Billing] verify warn:", e.message);
-      // If verification fails but Shopify redirected here, trust the approval.
-      isActive = true;
+      console.warn("[Billing] callback warn:", e.message);
     }
+  }
+  return res.redirect(
+    `${FRONTEND_URL}/admin?shop=${shop || ""}&upgraded=${plan || "1"}`,
+  );
+};
 
-    if (!isActive) {
-      return res.redirect(
-        `${FRONTEND_URL}/admin?shop=${shop}&billing_error=declined`,
-      );
+/* ── POST /api/billing/webhook ──
+   Shopify sends app_subscriptions/update when a plan is created, changed,
+   or cancelled on the managed-pricing page. We map the subscription name
+   to our plan key and persist it. This is how our DB stays in sync —
+   no token, no polling.
+
+   Register this webhook in the Partner Dashboard:
+     Topic: app_subscriptions/update
+     URL:   https://releaseit-backend.onrender.com/api/billing/webhook */
+export const handleSubscriptionWebhook = async (req, res) => {
+  // Ack immediately — Shopify retries on non-2xx.
+  res.status(200).send("OK");
+  try {
+    const shop = req.get("X-Shopify-Shop-Domain");
+    const sub = req.body?.app_subscription;
+    if (!shop || !sub) return;
+
+    const name = (sub.name || "").toLowerCase();
+    const status = (sub.status || "").toUpperCase();
+
+    if (status === "ACTIVE") {
+      let planKey = "free";
+      if (name.includes("pro")) planKey = "pro";
+      else if (name.includes("growth")) planKey = "growth";
+      else if (name.includes("starter")) planKey = "starter";
+      await setPlan(shop, planKey, true);
+      console.log(`[Billing] ✅ webhook: ${shop} → ${planKey} ("${sub.name}")`);
+    } else if (["CANCELLED", "EXPIRED", "DECLINED", "FROZEN"].includes(status)) {
+      await setPlan(shop, "free", true);
+      console.log(`[Billing] ↩ webhook: ${shop} → free (${status})`);
     }
-
-    await setPlan(shop, plan, true);
-    console.log(`[Billing] ✅ ${shop} → ${plan} (charge ${chargeId || "n/a"})`);
-
-    return res.redirect(`${FRONTEND_URL}/admin?shop=${shop}&upgraded=${plan}`);
   } catch (err) {
-    console.error("[Billing] callback error:", err.message);
-    res.status(500).send("Billing activation failed");
+    console.error("[Billing] webhook error:", err.message);
   }
 };
 
 /* ── POST /api/billing/cancel ──
-   Downgrades the shop back to free and cancels the active charge. */
+   Downgrade locally. The merchant cancels the actual subscription from
+   Shopify's managed-pricing page; the webhook then confirms it. */
 export const cancelSubscription = async (req, res) => {
   try {
     const { shop } = req.body;
     if (!shop) return res.status(400).json({ success: false });
 
-    const shopData = await Shop.findOne({ shop });
-    if (!shopData) {
-      return res.status(404).json({ success: false, message: "Shop not found" });
-    }
+    const storeHandle = shop.replace(".myshopify.com", "");
+    const managedPricingUrl = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
 
-    // Find active subscriptions via GraphQL, then cancel each.
-    try {
-      const listQuery = `{
-        currentAppInstallation {
-          activeSubscriptions { id status }
-        }
-      }`;
-      const listRes = await fetch(
-        `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
-        {
-          method: "POST",
-          headers: {
-            "X-Shopify-Access-Token": shopData.accessToken,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ query: listQuery }),
-        },
-      );
-      const listData = await listRes.json();
-      const subs =
-        listData?.data?.currentAppInstallation?.activeSubscriptions || [];
-
-      for (const sub of subs) {
-        const cancelMutation = `
-          mutation AppSubscriptionCancel($id: ID!) {
-            appSubscriptionCancel(id: $id) {
-              appSubscription { id status }
-              userErrors { field message }
-            }
-          }`;
-        await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
-          method: "POST",
-          headers: {
-            "X-Shopify-Access-Token": shopData.accessToken,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: cancelMutation,
-            variables: { id: sub.id },
-          }),
-        });
-      }
-    } catch (e) {
-      console.warn("[Billing] cancel cleanup warn:", e.message);
-    }
-
+    // Reflect the downgrade locally right away; webhook will reconcile.
     await setPlan(shop, "free", true);
-    res.json({ success: true });
+    res.json({ success: true, manageUrl: managedPricingUrl });
   } catch (err) {
     console.error("[Billing] cancel error:", err.message);
     res.status(500).json({ success: false, message: err.message });
