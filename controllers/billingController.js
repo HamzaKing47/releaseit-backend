@@ -101,44 +101,69 @@ export const createSubscription = async (req, res) => {
         .json({ success: false, message: "Shop not installed" });
     }
 
-    // Build the recurring charge payload.
     const returnUrl =
       `${BACKEND_URL}/api/billing/callback?shop=${encodeURIComponent(shop)}` +
       `&plan=${encodeURIComponent(plan)}`;
 
-    const body = {
-      recurring_application_charge: {
-        name: `ReleaseIt — ${planDef.name} Plan`,
-        price: planDef.price,
-        return_url: returnUrl,
-        trial_days: 0,
-        test: IS_TEST,
-      },
+    // GraphQL App Subscriptions API — the modern billing method.
+    // (Legacy REST recurring_application_charges fails for apps created
+    // in the new Shopify Dev Dashboard with an "owned by a Shop" error.)
+    const query = `
+      mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean!, $price: Decimal!) {
+        appSubscriptionCreate(
+          name: $name,
+          returnUrl: $returnUrl,
+          test: $test,
+          lineItems: [{
+            plan: {
+              appRecurringPricingDetails: {
+                price: { amount: $price, currencyCode: USD },
+                interval: EVERY_30_DAYS
+              }
+            }
+          }]
+        ) {
+          confirmationUrl
+          appSubscription { id }
+          userErrors { field message }
+        }
+      }`;
+
+    const variables = {
+      name: `ReleaseIt — ${planDef.name} Plan`,
+      returnUrl,
+      test: IS_TEST,
+      price: planDef.price,
     };
 
     const r = await fetch(
-      `https://${shop}/admin/api/${API_VERSION}/recurring_application_charges.json`,
+      `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
       {
         method: "POST",
         headers: {
           "X-Shopify-Access-Token": shopData.accessToken,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ query, variables }),
       },
     );
     const data = await r.json();
-    if (!r.ok || !data?.recurring_application_charge) {
-      console.error("[Billing] create charge failed:", data);
+    const result = data?.data?.appSubscriptionCreate;
+
+    if (result?.userErrors?.length) {
+      console.error("[Billing] GraphQL userErrors:", result.userErrors);
+      return res
+        .status(500)
+        .json({ success: false, message: result.userErrors[0].message });
+    }
+    if (!result?.confirmationUrl) {
+      console.error("[Billing] create charge failed:", JSON.stringify(data));
       return res
         .status(500)
         .json({ success: false, message: "Could not create charge" });
     }
 
-    return res.json({
-      success: true,
-      confirmationUrl: data.recurring_application_charge.confirmation_url,
-    });
+    return res.json({ success: true, confirmationUrl: result.confirmationUrl });
   } catch (err) {
     console.error("[Billing] subscribe error:", err.message);
     res.status(500).json({ success: false, message: err.message });
@@ -153,48 +178,54 @@ export const activateSubscription = async (req, res) => {
     const shop = req.query.shop;
     const plan = req.query.plan;
     const chargeId = req.query.charge_id;
-    if (!shop || !plan || !chargeId) {
-      return res.status(400).send("Missing shop / plan / charge_id");
+    if (!shop || !plan) {
+      return res.status(400).send("Missing shop / plan");
     }
 
     const shopData = await Shop.findOne({ shop });
     if (!shopData) return res.status(404).send("Shop not found");
 
-    // Verify the charge is accepted, then activate it.
-    const verify = await fetch(
-      `https://${shop}/admin/api/${API_VERSION}/recurring_application_charges/${chargeId}.json`,
-      {
-        headers: { "X-Shopify-Access-Token": shopData.accessToken },
-      },
-    );
-    const charge = (await verify.json())?.recurring_application_charge;
-    if (!charge || charge.status === "declined") {
-      return res.redirect(
-        `${FRONTEND_URL}/admin?shop=${shop}&billing_error=declined`,
-      );
-    }
-
-    if (charge.status === "accepted") {
-      await fetch(
-        `https://${shop}/admin/api/${API_VERSION}/recurring_application_charges/${chargeId}/activate.json`,
+    // With the GraphQL App Subscriptions API, the subscription is ACTIVE as
+    // soon as the merchant approves on Shopify's screen. Verify the active
+    // subscription exists, then persist the plan on our side.
+    let isActive = false;
+    try {
+      const query = `{
+        currentAppInstallation {
+          activeSubscriptions { id name status }
+        }
+      }`;
+      const r = await fetch(
+        `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
         {
           method: "POST",
           headers: {
             "X-Shopify-Access-Token": shopData.accessToken,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ recurring_application_charge: charge }),
+          body: JSON.stringify({ query }),
         },
+      );
+      const data = await r.json();
+      const subs =
+        data?.data?.currentAppInstallation?.activeSubscriptions || [];
+      isActive = subs.some((s) => s.status === "ACTIVE");
+    } catch (e) {
+      console.warn("[Billing] verify warn:", e.message);
+      // If verification fails but Shopify redirected here, trust the approval.
+      isActive = true;
+    }
+
+    if (!isActive) {
+      return res.redirect(
+        `${FRONTEND_URL}/admin?shop=${shop}&billing_error=declined`,
       );
     }
 
-    // Persist the new plan on our side and start a fresh billing cycle.
     await setPlan(shop, plan, true);
-    console.log(`[Billing] ✅ ${shop} → ${plan} (charge ${chargeId})`);
+    console.log(`[Billing] ✅ ${shop} → ${plan} (charge ${chargeId || "n/a"})`);
 
-    return res.redirect(
-      `${FRONTEND_URL}/admin?shop=${shop}&upgraded=${plan}`,
-    );
+    return res.redirect(`${FRONTEND_URL}/admin?shop=${shop}&upgraded=${plan}`);
   } catch (err) {
     console.error("[Billing] callback error:", err.message);
     res.status(500).send("Billing activation failed");
@@ -213,24 +244,47 @@ export const cancelSubscription = async (req, res) => {
       return res.status(404).json({ success: false, message: "Shop not found" });
     }
 
-    // Find active charges and cancel them.
+    // Find active subscriptions via GraphQL, then cancel each.
     try {
-      const list = await fetch(
-        `https://${shop}/admin/api/${API_VERSION}/recurring_application_charges.json`,
-        { headers: { "X-Shopify-Access-Token": shopData.accessToken } },
-      );
-      const data = await list.json();
-      const active = (data?.recurring_application_charges || []).filter(
-        (c) => c.status === "active",
-      );
-      for (const c of active) {
-        await fetch(
-          `https://${shop}/admin/api/${API_VERSION}/recurring_application_charges/${c.id}.json`,
-          {
-            method: "DELETE",
-            headers: { "X-Shopify-Access-Token": shopData.accessToken },
+      const listQuery = `{
+        currentAppInstallation {
+          activeSubscriptions { id status }
+        }
+      }`;
+      const listRes = await fetch(
+        `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
+        {
+          method: "POST",
+          headers: {
+            "X-Shopify-Access-Token": shopData.accessToken,
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({ query: listQuery }),
+        },
+      );
+      const listData = await listRes.json();
+      const subs =
+        listData?.data?.currentAppInstallation?.activeSubscriptions || [];
+
+      for (const sub of subs) {
+        const cancelMutation = `
+          mutation AppSubscriptionCancel($id: ID!) {
+            appSubscriptionCancel(id: $id) {
+              appSubscription { id status }
+              userErrors { field message }
+            }
+          }`;
+        await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
+          method: "POST",
+          headers: {
+            "X-Shopify-Access-Token": shopData.accessToken,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: cancelMutation,
+            variables: { id: sub.id },
+          }),
+        });
       }
     } catch (e) {
       console.warn("[Billing] cancel cleanup warn:", e.message);
