@@ -28,6 +28,23 @@ const shopSchema = new mongoose.Schema({
     },
   },
 
+  // 🚀 Sales Booster Settings
+  salesBooster: {
+    type: Object,
+    default: {
+      // Quantity offers — buy more, save more (shown on the COD form)
+      quantityOffersEnabled: false,
+      quantityOffers: [
+        // { minQty: 2, discountPercent: 10 }
+      ],
+      // One-tick order add-ons — shipping protection, gift wrap, etc.
+      addonsEnabled: false,
+      addons: [
+        // { id, title, price, description }
+      ],
+    },
+  },
+
   // 🛡️ Fraud Prevention Settings
   fraud: {
     type: Object,

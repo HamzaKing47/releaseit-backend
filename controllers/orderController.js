@@ -50,8 +50,59 @@ export const createOrder = async (req, res) => {
       quantity: item.quantity,
     }));
 
+    // 🚀 Sales Booster — add-ons + quantity discount (server-validated)
+    let discountCodes = [];
+    let boosterTags = [];
+    try {
+      const shopRecord = await Shop.findOne({ shop });
+      const sb = shopRecord?.salesBooster;
+      const { addons: selectedAddons } = req.body;
+
+      // Order add-ons → custom line items (use SERVER-side price, never trust client)
+      if (sb?.addonsEnabled && Array.isArray(selectedAddons) && selectedAddons.length) {
+        const configured = sb.addons || [];
+        selectedAddons.forEach((sel) => {
+          const match = configured.find(
+            (a) => a.id === sel.id || a.title === sel.title,
+          );
+          if (match) {
+            lineItems.push({
+              title: match.title,
+              price: Number(match.price) || 0,
+              quantity: 1,
+            });
+            boosterTags.push("Addon");
+          }
+        });
+      }
+
+      // Quantity offer → order-level percentage discount based on total qty
+      if (sb?.quantityOffersEnabled && Array.isArray(sb.quantityOffers)) {
+        const totalQty = items.reduce(
+          (sum, it) => sum + (Number(it.quantity) || 0),
+          0,
+        );
+        const best = sb.quantityOffers
+          .filter((o) => totalQty >= (Number(o.minQty) || 0))
+          .sort((a, b) => (b.discountPercent || 0) - (a.discountPercent || 0))[0];
+        if (best && best.discountPercent > 0) {
+          discountCodes = [
+            {
+              code: `QTY${best.discountPercent}`,
+              amount: String(best.discountPercent),
+              type: "percentage",
+            },
+          ];
+          boosterTags.push("Qty Offer");
+        }
+      }
+    } catch (sbErr) {
+      console.error("[SalesBooster] order build error:", sbErr.message);
+    }
+
     const orderData = {
       line_items: lineItems,
+      ...(discountCodes.length ? { discount_codes: discountCodes } : {}),
       customer: {
         first_name: name,
         last_name: ".",
@@ -78,7 +129,7 @@ export const createOrder = async (req, res) => {
         phone: formatPhone(phone),
       },
       financial_status: "pending",
-      tags: "COD, ReleaseIt",
+      tags: ["COD", "ReleaseIt", ...boosterTags].join(", "),
       note: "Order placed via ReleaseIt COD form",
     };
 
