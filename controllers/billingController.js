@@ -29,6 +29,15 @@ const API_VERSION = "2024-01";
 // Find it in your Partner Dashboard app URL, e.g. ".../apps/<handle>".
 const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || "releaseit-plus";
 
+// Billing mode:
+//   "direct"  → activate the plan instantly in our DB (used during
+//               development / before App Store publication, where the
+//               Shopify Billing API isn't available).
+//   "managed" → redirect to Shopify's hosted managed-pricing page
+//               (used once the app is published with managed pricing
+//               configured in the Partner Dashboard).
+const BILLING_MODE = (process.env.BILLING_MODE || "direct").toLowerCase();
+
 // Plan catalog — single source of truth for prices and display info.
 export const PLANS = {
   free: {
@@ -87,26 +96,41 @@ export const getPlans = (req, res) => {
 export const createSubscription = async (req, res) => {
   try {
     const { shop, plan } = req.body;
-    if (!shop) {
-      return res.status(400).json({ success: false, message: "shop required" });
+    if (!shop || !plan) {
+      return res
+        .status(400)
+        .json({ success: false, message: "shop and plan required" });
+    }
+    if (!PLANS[plan]) {
+      return res.status(400).json({ success: false, message: "Unknown plan" });
     }
 
-    // Free plan → no charge needed, just update locally.
+    // Free plan → always handled locally.
     if (plan === "free") {
-      await setPlan(shop, "free");
+      await setPlan(shop, "free", true);
       return res.json({
         success: true,
         confirmationUrl: `${FRONTEND_URL}/admin?shop=${shop}&upgraded=free`,
       });
     }
 
-    // Send the merchant to Shopify's hosted managed-pricing page, where
-    // they pick & approve a plan. Shopify then fires the
-    // app_subscriptions/update webhook back to us.
-    const storeHandle = shop.replace(".myshopify.com", "");
-    const managedPricingUrl = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+    // ── Managed mode (production): hosted Shopify pricing page ──
+    if (BILLING_MODE === "managed") {
+      const storeHandle = shop.replace(".myshopify.com", "");
+      const managedPricingUrl = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+      return res.json({ success: true, confirmationUrl: managedPricingUrl });
+    }
 
-    return res.json({ success: true, confirmationUrl: managedPricingUrl });
+    // ── Direct mode (default): activate immediately ──
+    // The Shopify Billing API requires a published public app with managed
+    // pricing configured. Until then, we activate the plan directly so the
+    // full plan/usage/limit system is testable and demoable.
+    await setPlan(shop, plan, true);
+    console.log(`[Billing] ✅ direct activate: ${shop} → ${plan}`);
+    return res.json({
+      success: true,
+      confirmationUrl: `${FRONTEND_URL}/admin?shop=${shop}&upgraded=${plan}`,
+    });
   } catch (err) {
     console.error("[Billing] subscribe error:", err.message);
     res.status(500).json({ success: false, message: err.message });
@@ -175,12 +199,18 @@ export const cancelSubscription = async (req, res) => {
     const { shop } = req.body;
     if (!shop) return res.status(400).json({ success: false });
 
-    const storeHandle = shop.replace(".myshopify.com", "");
-    const managedPricingUrl = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
-
-    // Reflect the downgrade locally right away; webhook will reconcile.
+    // Downgrade to free in our DB.
     await setPlan(shop, "free", true);
-    res.json({ success: true, manageUrl: managedPricingUrl });
+
+    // In managed mode, also send them to Shopify's page to cancel the
+    // actual charge. In direct mode, the local downgrade is enough.
+    if (BILLING_MODE === "managed") {
+      const storeHandle = shop.replace(".myshopify.com", "");
+      const manageUrl = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+      return res.json({ success: true, manageUrl });
+    }
+
+    res.json({ success: true });
   } catch (err) {
     console.error("[Billing] cancel error:", err.message);
     res.status(500).json({ success: false, message: err.message });
