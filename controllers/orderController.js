@@ -2,6 +2,7 @@ import { createShopifyOrder, getProducts } from "../services/shopifyService.js";
 import Shop from "../models/Shop.js";
 import Pixel from "../models/Pixel.js";
 import { fireServerSideEvents } from "../services/conversionsService.js";
+import { checkFraud, logOrder } from "../services/fraudService.js";
 
 const formatPhone = (phone) => {
   if (!phone) return phone;
@@ -15,12 +16,33 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop missing" });
     }
 
-    const { name, phone, address, city, items } = req.body;
+    const { name, phone, address, city, items, email, postalCode } = req.body;
 
     if (!name || !phone || !address || !city || !items?.length) {
       return res
         .status(400)
         .json({ success: false, message: "Missing required fields" });
+    }
+
+    // 🛡️ Fraud Prevention — run merchant-configured checks first.
+    const clientIp =
+      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      req.socket?.remoteAddress ||
+      "";
+    const fraud = await checkFraud(shop, {
+      email,
+      phone: formatPhone(phone),
+      ip: clientIp,
+      items,
+      postalCode,
+    });
+    if (fraud.blocked) {
+      console.log(`[Fraud] 🚫 Blocked order (${shop}): ${fraud.reason}`);
+      return res.status(403).json({
+        success: false,
+        blocked: true,
+        message: fraud.message,
+      });
     }
 
     const lineItems = items.map((item) => ({
@@ -64,16 +86,18 @@ export const createOrder = async (req, res) => {
     const result = await createShopifyOrder(shop, orderData);
     const order = result.order;
 
+    // 1.5️⃣ Log the order for fraud rate-limiting (non-blocking)
+    logOrder(shop, {
+      email,
+      phone: formatPhone(phone),
+      ip: clientIp,
+    }).catch(() => {});
+
     // 2️⃣ Server-side pixels fire karo (non-blocking)
     try {
       const pixels = await Pixel.find({ shop });
 
       if (pixels.length > 0) {
-        // Client info headers se lo
-        const clientIp =
-          req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-          req.socket?.remoteAddress ||
-          "";
         const clientUserAgent = req.headers["user-agent"] || "";
 
         // Fire karo — await nahi karte taake response slow na ho

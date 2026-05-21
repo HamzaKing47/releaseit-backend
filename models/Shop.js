@@ -27,6 +27,33 @@ const shopSchema = new mongoose.Schema({
       textColor: "#374151",
     },
   },
+
+  // 🛡️ Fraud Prevention Settings
+  fraud: {
+    type: Object,
+    default: {
+      // Rate limit: max orders from the same customer within a window
+      limitOrdersEnabled: false,
+      limitOrdersCount: 3,
+      limitOrdersHours: 24,
+      // Quantity cap
+      blockHighQuantity: false,
+      maxQuantity: 10,
+      // Blocklists (arrays of strings)
+      blockedEmails: [],
+      blockedPhones: [],
+      blockedIPs: [],
+      allowedIPs: [],
+      // Message shown when an order is blocked
+      blockMessage:
+        "We're unable to process your order at this time. Please contact support.",
+      // Postal code rules
+      excludePostalCodesEnabled: false,
+      excludedPostalCodes: [],
+      allowOnlyPostalCodesEnabled: false,
+      allowedPostalCodes: [],
+    },
+  },
 });
 
 export default mongoose.model("Shop", shopSchema);
