@@ -6,6 +6,7 @@ import pixelRoutes from "./routes/pixelRoutes.js";
 import whatsappRoutes from "./routes/whatsappRoutes.js";
 import billingRoutes from "./routes/billingRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
+import sessionRoutes from "./routes/sessionRoutes.js";
 import { sendOrderConfirmation } from "./controllers/whatsappController.js";
 
 const app = express();
@@ -18,6 +19,7 @@ app.use("/api", pixelRoutes);
 app.use("/api", whatsappRoutes);
 app.use("/api", billingRoutes);
 app.use("/api", contactRoutes);
+app.use("/api", sessionRoutes);
 
 // 🧪 DEBUG — Test order confirmation flow without creating a real Shopify order.
 // Usage: GET /api/_debug/test-confirm?shop=test-store.myshopify.com&phone=923001234567

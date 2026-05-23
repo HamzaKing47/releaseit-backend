@@ -17,5 +17,8 @@ export const shopify = shopifyApi({
   ],
   hostName: process.env.SHOPIFY_HOST.replace("https://", ""),
   apiVersion: "2024-04",
-  isEmbeddedApp: false,
+  // Embedded app → uses Token Exchange (expiring tokens) instead of the
+  // legacy OAuth grant (which issues non-expiring tokens that Shopify's
+  // Admin API now rejects).
+  isEmbeddedApp: true,
 });
