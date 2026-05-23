@@ -55,6 +55,40 @@ server.get("/auth", async (req, res) => {
   }
 });
 
+// Register the storefront COD-button script tag (idempotent).
+const INJECT_SRC = "https://releaseitnow.vercel.app/inject.js";
+const ensureScriptTag = async (shop, accessToken) => {
+  try {
+    const headers = {
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json",
+    };
+    // Skip if already registered.
+    const existing = await axios.get(
+      `https://${shop}/admin/api/2024-01/script_tags.json`,
+      { headers },
+    );
+    const already = (existing.data?.script_tags || []).some(
+      (t) => t.src === INJECT_SRC,
+    );
+    if (already) {
+      console.log("[ScriptTag] already present:", shop);
+      return;
+    }
+    await axios.post(
+      `https://${shop}/admin/api/2024-01/script_tags.json`,
+      { script_tag: { event: "onload", src: INJECT_SRC } },
+      { headers },
+    );
+    console.log("[ScriptTag] ✅ registered:", shop);
+  } catch (err) {
+    console.error(
+      "[ScriptTag] register failed:",
+      err.response?.data || err.message,
+    );
+  }
+};
+
 server.get("/auth/callback", async (req, res) => {
   try {
     const session = await shopify.auth.callback({
@@ -71,6 +105,8 @@ server.get("/auth/callback", async (req, res) => {
       { upsert: true },
     );
     console.log("✅ STORE CONNECTED:", shop);
+    // Auto-register the COD button script tag so it appears immediately.
+    await ensureScriptTag(shop, accessToken);
     res.send("App Installed Successfully ✅");
   } catch (err) {
     console.error("CALLBACK ERROR:", err);
