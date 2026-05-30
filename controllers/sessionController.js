@@ -15,38 +15,6 @@
 import { RequestedTokenType } from "@shopify/shopify-api";
 import { shopify } from "../config/shopifyAuth.js";
 import Shop from "../models/Shop.js";
-import axios from "axios";
-
-const INJECT_SRC = "https://releaseitnow.vercel.app/inject.js";
-
-// Register the storefront COD-button script tag (idempotent).
-const ensureScriptTag = async (shop, accessToken) => {
-  try {
-    const headers = {
-      "X-Shopify-Access-Token": accessToken,
-      "Content-Type": "application/json",
-    };
-    const existing = await axios.get(
-      `https://${shop}/admin/api/2024-01/script_tags.json`,
-      { headers },
-    );
-    const already = (existing.data?.script_tags || []).some(
-      (t) => t.src === INJECT_SRC,
-    );
-    if (already) return;
-    await axios.post(
-      `https://${shop}/admin/api/2024-01/script_tags.json`,
-      { script_tag: { event: "onload", src: INJECT_SRC } },
-      { headers },
-    );
-    console.log("[ScriptTag] ✅ registered:", shop);
-  } catch (err) {
-    console.error(
-      "[ScriptTag] register failed:",
-      err.response?.data || err.message,
-    );
-  }
-};
 
 /* ── POST /api/auth/token-exchange ──
    Body: { shop, sessionToken } */
@@ -85,8 +53,7 @@ export const tokenExchange = async (req, res) => {
     );
 
     console.log(`[TokenExchange] ✅ fresh token stored: ${shop}`);
-    // Now that we have a valid token, ensure the COD button script tag exists.
-    await ensureScriptTag(shop, session.accessToken);
+    // COD button is injected via the theme app embed extension — no ScriptTag.
     res.json({ success: true });
   } catch (err) {
     console.error(
