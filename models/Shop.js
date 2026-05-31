@@ -4,6 +4,13 @@ const shopSchema = new mongoose.Schema({
   shop: { type: String, required: true, unique: true },
   accessToken: { type: String, required: true },
 
+  // Expiring offline token metadata (Shopify requires expiring tokens).
+  // accessToken expires in ~1h; refreshToken lasts 90 days and is used to
+  // mint new tokens without merchant interaction.
+  refreshToken: { type: String, default: "" },
+  accessTokenExpiresAt: { type: Date, default: null },
+  refreshTokenExpiresAt: { type: Date, default: null },
+
   // COD Button Settings
   mode: { type: String, default: "both" },
   buttonText: { type: String, default: "Buy with Cash on Delivery" },

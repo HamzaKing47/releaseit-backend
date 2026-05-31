@@ -12,9 +12,7 @@
    keeping it fresh for background/customer-facing operations.
    ────────────────────────────────────────────────────────────── */
 
-import { RequestedTokenType } from "@shopify/shopify-api";
-import { shopify } from "../config/shopifyAuth.js";
-import Shop from "../models/Shop.js";
+import { exchangeSessionToken } from "../services/tokenService.js";
 
 /* ── POST /api/auth/token-exchange ──
    Body: { shop, sessionToken } */
@@ -34,25 +32,10 @@ export const tokenExchange = async (req, res) => {
     }
     shop = shop.replace(/\/$/, "");
 
-    const { session } = await shopify.auth.tokenExchange({
-      shop,
-      sessionToken,
-      requestedTokenType: RequestedTokenType.OfflineAccessToken,
-    });
+    // Mint an EXPIRING offline token (expiring=1) + store its refresh token.
+    await exchangeSessionToken(shop, sessionToken);
 
-    if (!session?.accessToken) {
-      return res
-        .status(500)
-        .json({ success: false, message: "No access token returned" });
-    }
-
-    await Shop.findOneAndUpdate(
-      { shop },
-      { shop, accessToken: session.accessToken },
-      { upsert: true },
-    );
-
-    console.log(`[TokenExchange] ✅ fresh token stored: ${shop}`);
+    console.log(`[TokenExchange] ✅ expiring token stored: ${shop}`);
     // COD button is injected via the theme app embed extension — no ScriptTag.
     res.json({ success: true });
   } catch (err) {
