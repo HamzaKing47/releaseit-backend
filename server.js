@@ -38,46 +38,20 @@ server.use(cors());
 server.use(express.json());
 
 // AUTH
-server.get("/auth", async (req, res) => {
-  try {
-    const shop = req.query.shop;
-    if (!shop) return res.status(400).send("Missing shop");
-    await shopify.auth.begin({
-      shop,
-      callbackPath: "/auth/callback",
-      isOnline: false,
-      rawRequest: req,
-      rawResponse: res,
-    });
-  } catch (err) {
-    console.error("AUTH ERROR:", err);
-    if (!res.headersSent) res.status(500).send("Auth start failed");
-  }
+// NOTE: The legacy OAuth grant (shopify.auth.begin / .callback with
+// isOnline:false) issues NON-EXPIRING offline tokens, which Shopify's Admin
+// API now rejects. This app uses Shopify managed installation + token
+// exchange (see /api/auth/token-exchange) which issues EXPIRING tokens.
+// So these routes just bounce the merchant into the app; they never mint a
+// legacy token anymore.
+server.get("/auth", (req, res) => {
+  const shop = req.query.shop || "";
+  res.redirect(`https://releaseitnow.vercel.app/admin?shop=${shop}`);
 });
 
-server.get("/auth/callback", async (req, res) => {
-  try {
-    const session = await shopify.auth.callback({
-      rawRequest: req,
-      rawResponse: res,
-    });
-    const shop = session.shop || session?.session?.shop;
-    const accessToken = session.accessToken || session?.session?.accessToken;
-    if (!shop || !accessToken)
-      return res.status(500).send("Shop or token missing");
-    await Shop.findOneAndUpdate(
-      { shop },
-      { shop, accessToken },
-      { upsert: true },
-    );
-    console.log("✅ STORE CONNECTED:", shop);
-    // COD button is now injected via the theme app embed extension
-    // (no Admin API ScriptTag needed).
-    res.send("App Installed Successfully ✅");
-  } catch (err) {
-    console.error("CALLBACK ERROR:", err);
-    res.status(500).send("Auth failed");
-  }
+server.get("/auth/callback", (req, res) => {
+  const shop = req.query.shop || "";
+  res.redirect(`https://releaseitnow.vercel.app/admin?shop=${shop}`);
 });
 
 server.use(app);
