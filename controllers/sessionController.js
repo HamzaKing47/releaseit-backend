@@ -12,7 +12,7 @@
    keeping it fresh for background/customer-facing operations.
    ────────────────────────────────────────────────────────────── */
 
-import { exchangeSessionToken } from "../services/tokenService.js";
+import { ensureToken } from "../services/tokenService.js";
 
 /* ── POST /api/auth/token-exchange ──
    Body: { shop, sessionToken } */
@@ -32,10 +32,15 @@ export const tokenExchange = async (req, res) => {
     }
     shop = shop.replace(/\/$/, "");
 
-    // Mint an EXPIRING offline token (expiring=1) + store its refresh token.
-    await exchangeSessionToken(shop, sessionToken);
+    // Mint an EXPIRING offline token only if we don't already hold a valid
+    // refresh token (a new exchange would revoke the active token chain).
+    const { skipped } = await ensureToken(shop, sessionToken);
 
-    console.log(`[TokenExchange] ✅ expiring token stored: ${shop}`);
+    console.log(
+      skipped
+        ? `[TokenExchange] ↩︎ kept existing token: ${shop}`
+        : `[TokenExchange] ✅ expiring token stored: ${shop}`,
+    );
     // COD button is injected via the theme app embed extension — no ScriptTag.
     res.json({ success: true });
   } catch (err) {

@@ -177,6 +177,9 @@ export const createOrder = async (req, res) => {
         name: order.name,
         total_price: order.total_price,
         currency: order.currency,
+        // Shopify's official order-status / "Thank you" page (token-based,
+        // viewable by the customer without logging in).
+        order_status_url: order.order_status_url || "",
       },
     });
   } catch (err) {

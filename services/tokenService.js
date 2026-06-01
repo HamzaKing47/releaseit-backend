@@ -41,6 +41,30 @@ const persistTokens = async (shop, data) => {
   return update;
 };
 
+// Called on every admin load. A fresh token exchange REVOKES the previous
+// expiring token + its refresh token (Shopify allows only one active per
+// shop). So only exchange when we don't already hold a usable refresh token —
+// otherwise we'd revoke the chain the customer-facing flow depends on.
+export const ensureToken = async (shop, sessionToken) => {
+  const shopData = await Shop.findOne({ shop });
+  const atExpiresAt = shopData?.accessTokenExpiresAt
+    ? new Date(shopData.accessTokenExpiresAt).getTime()
+    : 0;
+
+  // If the current access token is still valid AND we have a refresh token,
+  // leave the chain alone (a new exchange would revoke it). Otherwise do a
+  // fresh exchange — this also self-heals a stale/revoked chain in one step.
+  if (
+    shopData?.refreshToken &&
+    atExpiresAt - EXPIRY_BUFFER_MS > Date.now()
+  ) {
+    return { skipped: true };
+  }
+
+  await exchangeSessionToken(shop, sessionToken);
+  return { skipped: false };
+};
+
 // Exchange an App Bridge session token for an EXPIRING offline token.
 export const exchangeSessionToken = async (shop, sessionToken) => {
   const body = new URLSearchParams({
@@ -105,6 +129,12 @@ export const getValidAccessToken = async (shop) => {
       console.error(
         "[Token] refresh failed:",
         err.response?.data || err.message,
+      );
+      // The refresh token is dead (expired or revoked by a newer exchange).
+      // Clear it so the next admin app open performs a fresh token exchange.
+      await Shop.findOneAndUpdate(
+        { shop },
+        { refreshToken: "", refreshTokenExpiresAt: null, accessTokenExpiresAt: null },
       );
       throw new Error(
         "Access token expired and refresh failed. Merchant must re-open the app.",
