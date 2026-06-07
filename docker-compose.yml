@@ -1,0 +1,39 @@
+# One-command deploy: backend + WAHA (WhatsApp) on a single droplet.
+#   docker compose up -d --build
+#
+# WAHA is NOT exposed to the internet (no public port) — the backend talks
+# to it over the private compose network at http://waha:3000.
+
+services:
+  backend:
+    build: .
+    restart: always
+    env_file: .env
+    environment:
+      # Internal addresses on the compose network (override .env if needed).
+      - WAHA_URL=http://waha:3000
+      - BACKEND_URL=http://backend:5000
+    ports:
+      - "5000:5000"
+    depends_on:
+      - waha
+    networks: [releaseit]
+
+  waha:
+    image: devlikeapro/waha
+    restart: always
+    environment:
+      # Must match WAHA_APIKEY in the backend .env.
+      - WHATSAPP_API_KEY=releaseit123
+      # Lightweight engine (no chromium) — good for small RAM droplets.
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
+    volumes:
+      # Persist WhatsApp session so you don't re-scan the QR on every restart.
+      - waha_sessions:/app/.sessions
+    networks: [releaseit]
+
+volumes:
+  waha_sessions:
+
+networks:
+  releaseit:
