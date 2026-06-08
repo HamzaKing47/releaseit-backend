@@ -5,6 +5,23 @@
 # to it over the private compose network at http://waha:3000.
 
 services:
+  # HTTPS reverse proxy — auto SSL via Let's Encrypt for BACKEND_DOMAIN.
+  caddy:
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - BACKEND_DOMAIN=${BACKEND_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    networks: [releaseit]
+
   backend:
     build: .
     restart: always
@@ -13,19 +30,24 @@ services:
       # Internal addresses on the compose network (override .env if needed).
       - WAHA_URL=http://waha:3000
       - BACKEND_URL=http://backend:5000
-    ports:
-      - "5000:5000"
+    # No public port — Caddy fronts it on 443 (HTTPS).
+    expose:
+      - "5000"
     depends_on:
       - waha
     networks: [releaseit]
 
   waha:
-    image: devlikeapro/waha
+    # Core (free, 1 session): devlikeapro/waha
+    # Plus (multi-session, needed for 2+ stores): devlikeapro/waha-plus
+    #   → set WAHA_IMAGE=devlikeapro/waha-plus in .env after buying Plus,
+    #     and set WAHA_CORE=false in .env.
+    image: ${WAHA_IMAGE:-devlikeapro/waha}
     restart: always
     environment:
       # Must match WAHA_APIKEY in the backend .env.
       - WHATSAPP_API_KEY=releaseit123
-      # Lightweight engine (no chromium) — good for small RAM droplets.
+      # Lightweight engine (no chromium) — good for small RAM + many sessions.
       - WHATSAPP_DEFAULT_ENGINE=NOWEB
     volumes:
       # Persist WhatsApp session so you don't re-scan the QR on every restart.
@@ -34,6 +56,8 @@ services:
 
 volumes:
   waha_sessions:
+  caddy_data:
+  caddy_config:
 
 networks:
   releaseit:

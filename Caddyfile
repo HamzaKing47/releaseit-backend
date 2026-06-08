@@ -1,0 +1,6 @@
+# Caddy auto-fetches a free Let's Encrypt SSL cert for this domain and
+# reverse-proxies HTTPS traffic to the backend. The domain is read from the
+# BACKEND_DOMAIN env var (set it in .env, e.g. api.ordernowcodform.xyz).
+{$BACKEND_DOMAIN} {
+    reverse_proxy backend:5000
+}
