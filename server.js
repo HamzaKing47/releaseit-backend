@@ -5,9 +5,17 @@ dotenv.config();
 import express from "express";
 import cors from "cors";
 import app from "./app.js";
-import { shopify } from "./config/shopifyAuth.js";
-import Shop from "./models/Shop.js";
-import axios from "axios";
+
+// ── Process-level safety nets ── log instead of dying silently. Combined with
+// Docker's restart:always, the service self-heals from unexpected crashes.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+  // Exit so the container restarts into a clean state.
+  process.exit(1);
+});
 
 mongoose
   .connect(process.env.MONGO_URI)

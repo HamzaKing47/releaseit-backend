@@ -1,5 +1,8 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+
 import orderRoutes from "./routes/orderRoutes.js";
 import settingRoutes from "./routes/settingRoutes.js";
 import pixelRoutes from "./routes/pixelRoutes.js";
@@ -7,12 +10,45 @@ import whatsappRoutes from "./routes/whatsappRoutes.js";
 import billingRoutes from "./routes/billingRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
-import { sendOrderConfirmation } from "./controllers/whatsappController.js";
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
+// Behind Caddy (reverse proxy) — trust the first proxy so req.ip is the
+// real client IP (needed for correct rate-limiting).
+app.set("trust proxy", 1);
+
+// ── Security headers ──
+// crossOriginResourcePolicy is relaxed because the storefront (a different
+// origin) legitimately fetches from this API.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: false, // this is a JSON API, not an HTML site
+  }),
+);
+
+// ── CORS ── open, because the COD button/form runs on many storefront domains.
+app.use(cors());
+
+// ── Body parsing ── cap size to avoid abuse.
+app.use(express.json({ limit: "1mb" }));
+
+// ── Rate limiting ── generous per-IP cap to stop abuse without blocking real traffic.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 200, // per IP per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many requests, slow down." },
+});
+app.use("/api", apiLimiter);
+
+// ── Health check (for uptime monitoring / load balancers) ──
+app.get("/api/health", (req, res) => {
+  res.json({ success: true, status: "ok", time: new Date().toISOString() });
+});
+
+// ── Routes ──
 app.use("/api", orderRoutes);
 app.use("/api", settingRoutes);
 app.use("/api", pixelRoutes);
@@ -21,33 +57,20 @@ app.use("/api", billingRoutes);
 app.use("/api", contactRoutes);
 app.use("/api", sessionRoutes);
 
-// 🧪 DEBUG — Test order confirmation flow without creating a real Shopify order.
-// Usage: GET /api/_debug/test-confirm?shop=test-store.myshopify.com&phone=923001234567
-// REMOVE THIS ROUTE BEFORE PRODUCTION DEPLOY.
-app.get("/api/_debug/test-confirm", async (req, res) => {
-  try {
-    const shop = req.query.shop;
-    const phone = req.query.phone;
-    if (!shop || !phone) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "shop & phone query params required" });
-    }
-    await sendOrderConfirmation(shop, {
-      name: "#1001",
-      currency: "PKR",
-      total_price: "2500",
-      shipping_address: {
-        first_name: "Test Customer",
-        phone,
-        address1: "House 12, Street 4",
-        city: "Lahore",
-      },
-    });
-    res.json({ ok: true, message: "Order confirmation triggered" });
-  } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
-  }
+// ── 404 handler ──
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: "Route not found" });
+});
+
+// ── Global error handler ── last safety net; any thrown/next(err) lands here
+// so a single bad request can never crash the whole server.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error("[Unhandled Route Error]", err?.stack || err?.message || err);
+  if (res.headersSent) return;
+  res
+    .status(err.status || 500)
+    .json({ success: false, message: "Something went wrong on the server." });
 });
 
 export default app;
