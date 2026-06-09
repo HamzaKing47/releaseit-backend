@@ -103,10 +103,13 @@ export const createOrder = async (req, res) => {
     const orderData = {
       line_items: lineItems,
       ...(discountCodes.length ? { discount_codes: discountCodes } : {}),
+      // NOTE: we intentionally do NOT set customer.phone here. Shopify enforces
+      // a unique phone per customer, so reusing a phone throws
+      // "customer.phone_number has already been taken". The phone is still
+      // captured in shipping/billing address below for COD contact.
       customer: {
         first_name: name,
         last_name: ".",
-        phone: formatPhone(phone),
       },
       shipping_address: {
         first_name: name,
