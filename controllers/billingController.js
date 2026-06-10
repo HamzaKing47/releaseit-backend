@@ -75,7 +75,7 @@ export const PLANS = {
 const IS_TEST = (process.env.SHOPIFY_BILLING_TEST || "true") === "true";
 
 const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://releaseitnow.vercel.app";
+  process.env.FRONTEND_URL || "https://ordernowcodform.xyz";
 const BACKEND_URL = (
   process.env.BACKEND_URL || "http://localhost:5000"
 ).replace(/\/$/, "");

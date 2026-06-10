@@ -45,6 +45,11 @@ server.set("trust proxy", 1);
 server.use(cors());
 server.use(express.json());
 
+// Frontend (admin + COD form) base URL. Override with FRONTEND_URL in .env.
+const FRONTEND_URL = (
+  process.env.FRONTEND_URL || "https://ordernowcodform.xyz"
+).replace(/\/$/, "");
+
 // AUTH
 // NOTE: The legacy OAuth grant (shopify.auth.begin / .callback with
 // isOnline:false) issues NON-EXPIRING offline tokens, which Shopify's Admin
@@ -54,12 +59,12 @@ server.use(express.json());
 // legacy token anymore.
 server.get("/auth", (req, res) => {
   const shop = req.query.shop || "";
-  res.redirect(`https://releaseitnow.vercel.app/admin?shop=${shop}`);
+  res.redirect(`${FRONTEND_URL}/admin?shop=${shop}`);
 });
 
 server.get("/auth/callback", (req, res) => {
   const shop = req.query.shop || "";
-  res.redirect(`https://releaseitnow.vercel.app/admin?shop=${shop}`);
+  res.redirect(`${FRONTEND_URL}/admin?shop=${shop}`);
 });
 
 server.use(app);
@@ -71,6 +76,6 @@ server.get("/test", (req, res) => res.send("AUTH ROUTE ACTIVE"));
 
 server.get("/", (req, res) => {
   const shop = req.query.shop;
-  res.redirect(`https://releaseitnow.vercel.app/?shop=${shop}`);
+  res.redirect(`${FRONTEND_URL}/?shop=${shop}`);
 });
 
