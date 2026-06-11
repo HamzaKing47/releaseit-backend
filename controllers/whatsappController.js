@@ -431,6 +431,7 @@ const handleConfirm = async (shop, phone, orderCode) => {
       order: {
         id: order.id,
         tags: mergeTags(order.tags, ["Order Confirmed", "COD Confirmed"]),
+        note: `${order.note ? order.note + "\n" : ""}✅ Confirmed by customer via WhatsApp`,
       },
     },
   );
@@ -506,6 +507,7 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
         id: order.id,
         tags,
         shipping_address: { ...order.shipping_address, address1: newAddress },
+        note: `${order.note ? order.note + "\n" : ""}📍 Address updated via WhatsApp: ${newAddress}`,
       },
     },
   );
@@ -522,6 +524,14 @@ const handleCancel = async (shop, phone, orderCode) => {
     await sendMessage(shop, phone, "❌ Order not found.");
     return;
   }
+  // Tag + note before cancelling (the cancel endpoint itself takes no note).
+  await shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
+    order: {
+      id: order.id,
+      tags: mergeTags(order.tags, ["Cancelled by Customer"]),
+      note: `${order.note ? order.note + "\n" : ""}❌ Cancelled by customer via WhatsApp`,
+    },
+  });
   await shopifyReq(
     shop,
     shopData.accessToken,
