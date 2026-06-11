@@ -22,6 +22,10 @@ const {
 // WAHA-only: webhook event ingester
 const handleWebhookEvent = waha.handleWebhookEvent;
 
+// Live status query (falls back to in-memory for the baileys provider).
+const getLiveStatus =
+  waha.getLiveStatus || (async (shop) => getClientStatus(shop));
+
 import fetch from "node-fetch";
 import QRCode from "qrcode";
 import { configureSender, enqueueMessage } from "../services/messageQueue.js";
@@ -91,7 +95,7 @@ export const getWhatsappSettings = async (req, res) => {
     const shop = req.query.shop?.replace(/\/$/, "");
     if (!shop) return res.status(400).json({ success: false });
     const session = await WhatsappSession.findOne({ shop });
-    const status = getClientStatus(shop);
+    const status = await getLiveStatus(shop);
     const usage = await getUsage(shop);
     res.json({
       success: true,
@@ -218,7 +222,7 @@ export const getQRCode = async (req, res) => {
 /* ── STATUS ── */
 export const checkStatus = async (req, res) => {
   const shop = req.query.shop?.replace(/\/$/, "");
-  res.json({ success: true, status: getClientStatus(shop) });
+  res.json({ success: true, status: await getLiveStatus(shop) });
 };
 
 /* ── DISCONNECT ── */
@@ -240,7 +244,7 @@ export const sendTestMessage = async (req, res) => {
   try {
     const { shop, phone } = req.body;
     if (!shop || !phone) return res.status(400).json({ success: false });
-    if (getClientStatus(shop) !== "connected") {
+    if ((await getLiveStatus(shop)) !== "connected") {
       return res
         .status(400)
         .json({ success: false, message: "WhatsApp not connected" });
@@ -261,7 +265,16 @@ export const sendOrderConfirmation = async (shop, order) => {
   try {
     const session = await WhatsappSession.findOne({ shop });
     if (!session?.enabled || !session?.sendOnOrderCreate) return;
-    if (getClientStatus(shop) !== "connected") return;
+    // Use the LIVE WAHA status — the in-memory status is empty after a restart
+    // even though the WAHA session is still paired, which silently dropped
+    // confirmation messages.
+    const liveStatus = await getLiveStatus(shop);
+    if (liveStatus !== "connected") {
+      console.error(
+        `[WA] order confirm skipped — WhatsApp not connected (status=${liveStatus})`,
+      );
+      return;
+    }
 
     const phone = order.shipping_address?.phone || order.customer?.phone;
     if (!phone) return;

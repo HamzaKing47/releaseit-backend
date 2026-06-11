@@ -281,6 +281,32 @@ export const sendMessage = async (shop, phone, text) => {
 export const getClientStatus = (shop) =>
   clients.get(shop)?.status || "disconnected";
 
+// Query WAHA for the REAL session state. The in-memory `clients` map is wiped
+// on every backend restart, so it falsely reports "disconnected" even when the
+// WAHA session is still paired (the session persists in the WAHA volume). This
+// asks WAHA directly, re-syncs the in-memory state, and resumes polling — so
+// both the admin UI and order-message sending reflect the truth after restarts.
+export const getLiveStatus = async (shop) => {
+  try {
+    const session = getSessionName(shop);
+    const data = await wahaFetch(`/api/sessions/${session}`);
+    const mapped = mapWahaStatus(data.status);
+    const c = ensureClient(shop);
+    c.status = mapped;
+    if (mapped === "connected") {
+      if (!c.pollTimer) startPolling(shop);
+      await WhatsappSession.findOneAndUpdate(
+        { shop },
+        { status: "connected" },
+        { upsert: true },
+      ).catch(() => {});
+    }
+    return mapped;
+  } catch {
+    return clients.get(shop)?.status || "disconnected";
+  }
+};
+
 export const getClientQR = (shop) => clients.get(shop)?.qrCode || null;
 
 export const onMessage = (shop, handler) => {
