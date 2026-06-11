@@ -431,7 +431,7 @@ const handleConfirm = async (shop, phone, orderCode) => {
       order: {
         id: order.id,
         tags: mergeTags(order.tags, ["Order Confirmed", "COD Confirmed"]),
-        note: `${order.note ? order.note + "\n" : ""}✅ Confirmed by customer via WhatsApp`,
+        note: `✅ Confirmed by customer via WhatsApp\n\n— Order Now COD form and Upsells`,
       },
     },
   );
@@ -507,7 +507,7 @@ const handleAddressReceived = async (shop, phone, newAddress) => {
         id: order.id,
         tags,
         shipping_address: { ...order.shipping_address, address1: newAddress },
-        note: `${order.note ? order.note + "\n" : ""}📍 Address updated via WhatsApp: ${newAddress}`,
+        note: `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`,
       },
     },
   );
@@ -529,7 +529,7 @@ const handleCancel = async (shop, phone, orderCode) => {
     order: {
       id: order.id,
       tags: mergeTags(order.tags, ["Cancelled by Customer"]),
-      note: `${order.note ? order.note + "\n" : ""}❌ Cancelled by customer via WhatsApp`,
+      note: `❌ Cancelled by customer via WhatsApp\n\n— Order Now COD form and Upsells`,
     },
   });
   await shopifyReq(

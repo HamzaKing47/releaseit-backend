@@ -143,7 +143,7 @@ export const createOrder = async (req, res) => {
       phone: formatPhone(phone),
       ...(email ? { email } : {}),
       tags: ["COD", "ReleaseIt", ...boosterTags].join(", "),
-      note: "Order placed via ReleaseIt COD form",
+      note: "🛒 Order placed via Order Now COD form and Upsells",
     };
 
     // 1️⃣ Shopify order create karo
