@@ -137,6 +137,11 @@ export const createOrder = async (req, res) => {
         phone: formatPhone(phone),
       },
       financial_status: "pending",
+      // Order-level phone/email → shows in the order's "Contact information".
+      // (We deliberately don't set customer.phone to avoid Shopify's unique
+      // phone-per-customer conflict on repeat orders.)
+      phone: formatPhone(phone),
+      ...(email ? { email } : {}),
       tags: ["COD", "ReleaseIt", ...boosterTags].join(", "),
       note: "Order placed via ReleaseIt COD form",
     };

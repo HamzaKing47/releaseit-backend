@@ -1,5 +1,6 @@
 import WhatsappSession from "../models/WhatsappSession.js";
 import Shop from "../models/Shop.js";
+import { getValidAccessToken } from "../services/tokenService.js";
 
 // 🔀 WhatsApp backend selector — set WHATSAPP_PROVIDER=baileys to use the legacy lib
 const PROVIDER = (process.env.WHATSAPP_PROVIDER || "waha").toLowerCase();
@@ -23,8 +24,16 @@ const {
 const handleWebhookEvent = waha.handleWebhookEvent;
 
 // Live status query (falls back to in-memory for the baileys provider).
-const getLiveStatus =
-  waha.getLiveStatus || (async (shop) => getClientStatus(shop));
+// Whenever the session is confirmed connected, (re)register the incoming-reply
+// handler — idempotent — so CONFIRM / UPDATE ADDRESS / CANCEL replies keep
+// working even after a backend restart (where the in-memory handler was lost).
+const getLiveStatus = async (shop) => {
+  const status = waha.getLiveStatus
+    ? await waha.getLiveStatus(shop)
+    : getClientStatus(shop);
+  if (status === "connected") registerMessageHandler(shop);
+  return status;
+};
 
 import fetch from "node-fetch";
 import QRCode from "qrcode";
@@ -62,11 +71,14 @@ const SHOPIFY_API_VERSION = "2024-01";
 
 const shopifyReq = async (
   shop,
-  token,
+  _token, // ignored — we always fetch a fresh (auto-refreshed) token below
   endpoint,
   method = "GET",
   body = null,
 ) => {
+  // Always use a currently-valid token so reply actions (tag/cancel/address)
+  // keep working past the ~1h expiry of the stored offline token.
+  const token = await getValidAccessToken(shop);
   const res = await fetch(
     `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/${endpoint}`,
     {
@@ -437,10 +449,15 @@ const handleAddressRequest = async (shop, phone, orderCode) => {
       },
     );
   }
+  const currentAddress = order
+    ? [order.shipping_address?.address1, order.shipping_address?.city]
+        .filter(Boolean)
+        .join(", ")
+    : "";
   await sendMessage(
     shop,
     phone,
-    `📍 *Update Address*\n\nPlease type your new complete address.\n\n_Example: House 12, Street 4, Lahore_`,
+    `📍 *Update Address*\n\nYour current address:\n_${currentAddress || "—"}_\n\nReply with your *new complete address* and we'll update it instantly. ✏️`,
   );
 };
 
