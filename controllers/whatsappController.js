@@ -90,7 +90,13 @@ const shopifyReq = async (
       ...(body && { body: JSON.stringify(body) }),
     },
   );
-  return res.json();
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error(
+      `[WA] Shopify ${method} ${endpoint} → ${res.status}: ${JSON.stringify(json).slice(0, 300)}`,
+    );
+  }
+  return json;
 };
 
 const mapStatus = (s) =>
@@ -409,6 +415,9 @@ export const resumeConnectedShops = async () => {
 /* ── REPLY HANDLERS ── */
 const handleConfirm = async (shop, phone, orderCode) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
+  console.log(
+    `[WA] handleConfirm orderCode=${orderCode} → ${order ? `found ${order.name} (id=${order.id})` : "NOT FOUND"}`,
+  );
   if (!order) {
     await sendMessage(shop, phone, "❌ Order not found.");
     return;
