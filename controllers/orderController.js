@@ -147,6 +147,17 @@ export const createOrder = async (req, res) => {
       ip: clientIp,
     }).catch(() => {});
 
+    // 1.6️⃣ WhatsApp order confirmation (non-blocking). The Shopify orders/create
+    // webhook intentionally skips "ReleaseIt"-tagged orders, so COD-form orders
+    // must be messaged here directly. Dynamic import avoids any circular import.
+    import("./whatsappController.js")
+      .then(({ sendOrderConfirmation }) =>
+        sendOrderConfirmation(shop, order).catch((e) =>
+          console.error("[WA] order confirm failed:", e.message),
+        ),
+      )
+      .catch((e) => console.error("[WA] import failed:", e.message));
+
     // 2️⃣ Server-side pixels fire karo (non-blocking)
     try {
       const pixels = await Pixel.find({ shop });
