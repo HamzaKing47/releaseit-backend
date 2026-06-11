@@ -18,7 +18,12 @@ export const createOrder = async (req, res) => {
 
     const { name, phone, address, city, items, email, postalCode } = req.body;
 
+    console.log(
+      `[Order] /create-order hit — shop=${shop}, phone=${phone}, items=${items?.length || 0}`,
+    );
+
     if (!name || !phone || !address || !city || !items?.length) {
+      console.log("[Order] ❌ missing required fields");
       return res
         .status(400)
         .json({ success: false, message: "Missing required fields" });
@@ -150,11 +155,14 @@ export const createOrder = async (req, res) => {
     // 1.6️⃣ WhatsApp order confirmation (non-blocking). The Shopify orders/create
     // webhook intentionally skips "ReleaseIt"-tagged orders, so COD-form orders
     // must be messaged here directly. Dynamic import avoids any circular import.
+    console.log(
+      `[WA] attempting order confirmation → ${shop}, to=${order?.shipping_address?.phone}`,
+    );
     import("./whatsappController.js")
       .then(({ sendOrderConfirmation }) =>
-        sendOrderConfirmation(shop, order).catch((e) =>
-          console.error("[WA] order confirm failed:", e.message),
-        ),
+        sendOrderConfirmation(shop, order)
+          .then(() => console.log("[WA] ✅ order confirmation handed to WAHA"))
+          .catch((e) => console.error("[WA] order confirm failed:", e.message)),
       )
       .catch((e) => console.error("[WA] import failed:", e.message));
 
