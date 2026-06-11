@@ -155,12 +155,26 @@ export const createOrder = async (req, res) => {
     // 1.6️⃣ WhatsApp order confirmation (non-blocking). The Shopify orders/create
     // webhook intentionally skips "ReleaseIt"-tagged orders, so COD-form orders
     // must be messaged here directly. Dynamic import avoids any circular import.
+    // Shopify's create-order response does not reliably echo back the shipping
+    // phone (we no longer set customer.phone). So build the WhatsApp payload
+    // from the FORM data we already have, guaranteeing a recipient number.
+    const waOrder = {
+      ...order,
+      shipping_address: {
+        ...(order?.shipping_address || {}),
+        phone: formatPhone(phone),
+        first_name: order?.shipping_address?.first_name || name,
+        address1: order?.shipping_address?.address1 || address,
+        city: order?.shipping_address?.city || city,
+      },
+    };
+
     console.log(
-      `[WA] attempting order confirmation → ${shop}, to=${order?.shipping_address?.phone}`,
+      `[WA] attempting order confirmation → ${shop}, to=${waOrder.shipping_address.phone}`,
     );
     import("./whatsappController.js")
       .then(({ sendOrderConfirmation }) =>
-        sendOrderConfirmation(shop, order)
+        sendOrderConfirmation(shop, waOrder)
           .then(() => console.log("[WA] ✅ order confirmation handed to WAHA"))
           .catch((e) => console.error("[WA] order confirm failed:", e.message)),
       )
