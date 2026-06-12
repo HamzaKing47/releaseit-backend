@@ -506,11 +506,20 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
     "COD Confirmed",
   ]);
 
-  // First try WITH the stored country. Some stores (e.g. dev/test stores that
-  // don't have the country in their shipping zones) reject it with
-  // "Country/region not supported" — in that case retry WITHOUT country_code so
-  // the address still updates. Real merchant stores keep the country.
-  let result = await shopifyReq(
+  // 1) FIRST record the new address in the order note + tags on its own. This
+  //    PUT never touches shipping_address, so it can't be rejected by address
+  //    validation — the merchant ALWAYS sees the new address in the order
+  //    notes/timeline, even on a store that won't accept the structured field.
+  await shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
+    order: { id: order.id, tags, note },
+  });
+
+  // 2) THEN try to write the structured shipping_address as well. On a real
+  //    merchant store (country supported) this succeeds and the Shipping address
+  //    block updates. Some dev/test stores reject the country with
+  //    "Country/region not supported" — we retry without country_code, then give
+  //    up quietly because step 1 already captured the address in the note.
+  let addrResult = await shopifyReq(
     shop,
     shopData.accessToken,
     `orders/${order.id}.json`,
@@ -518,8 +527,6 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
     {
       order: {
         id: order.id,
-        tags,
-        note,
         shipping_address: {
           ...baseAddr,
           country_code: order.shipping_address?.country_code || "PK",
@@ -528,28 +535,24 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
     },
   );
 
-  if (result?.errors) {
-    console.error(
-      `[WA] address PUT failed, retrying without country_code → ${JSON.stringify(result.errors).slice(0, 200)}`,
-    );
-    result = await shopifyReq(
+  if (addrResult?.errors) {
+    addrResult = await shopifyReq(
       shop,
       shopData.accessToken,
       `orders/${order.id}.json`,
       "PUT",
-      { order: { id: order.id, tags, note, shipping_address: baseAddr } },
+      { order: { id: order.id, shipping_address: baseAddr } },
     );
   }
 
-  if (result?.errors) {
-    await sendMessage(
-      shop,
-      phone,
-      `⚠️ Address couldn't be saved automatically. Our team will update it manually. Order *${order.name}* is confirmed.`,
+  if (addrResult?.errors) {
+    console.error(
+      `[WA] structured shipping_address not writable on this store — recorded in note instead: ${JSON.stringify(addrResult.errors).slice(0, 200)}`,
     );
-    return;
   }
 
+  // The address is recorded either way (note, and structured field on supported
+  // stores) → always confirm to the customer.
   await sendMessage(
     shop,
     phone,
