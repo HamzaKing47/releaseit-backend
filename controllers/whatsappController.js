@@ -489,9 +489,21 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   // Step 2: new address provided → update directly.
   // Clean/minimal address (no province/lat/long) — spreading the full address
   // Shopify returns makes the PUT fail validation.
-  // The customer sends their COMPLETE new address as one line, so it all goes
-  // into address1. We clear city/address2 so no stale value (e.g. the old city)
-  // lingers next to the new address in the Shipping address block.
+  // The customer sends their COMPLETE new address as one line → it all goes into
+  // address1. Shopify REQUIRES a city, so derive it from that line (the part
+  // after the last comma, else the last word) instead of keeping the stale old
+  // city. e.g. "House 5, Street 4, Lahore" → "Lahore"; "House 5 Lahore" → "Lahore".
+  const addrParts = newAddress
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const derivedCity =
+    addrParts.length > 1
+      ? addrParts[addrParts.length - 1]
+      : newAddress.trim().split(/\s+/).pop() ||
+        order.shipping_address?.city ||
+        "";
+
   const baseAddr = {
     first_name:
       order.shipping_address?.first_name ||
@@ -500,7 +512,7 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
     last_name: order.shipping_address?.last_name || ".",
     address1: newAddress,
     address2: "",
-    city: "",
+    city: derivedCity,
     phone: order.shipping_address?.phone || order.phone || "",
   };
   const note = `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`;
