@@ -487,31 +487,69 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   }
 
   // Step 2: new address provided → update directly.
-  await shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
-    order: {
-      id: order.id,
-      tags: mergeTags(order.tags, [
-        "Address Updated",
-        "Order Confirmed",
-        "COD Confirmed",
-      ]),
-      // Send the SAME clean/minimal address shape that succeeds on create.
-      // Spreading the full address Shopify returned (province_code, country,
-      // lat/long, etc.) makes the PUT fail validation → the old address sticks.
-      shipping_address: {
-        first_name:
-          order.shipping_address?.first_name ||
-          order.customer?.first_name ||
-          "Customer",
-        last_name: order.shipping_address?.last_name || ".",
-        address1: newAddress,
-        city: order.shipping_address?.city || "",
-        country_code: order.shipping_address?.country_code || "PK",
-        phone: order.shipping_address?.phone || order.phone || "",
+  // Clean/minimal address (no province/lat/long) — spreading the full address
+  // Shopify returns makes the PUT fail validation.
+  const baseAddr = {
+    first_name:
+      order.shipping_address?.first_name ||
+      order.customer?.first_name ||
+      "Customer",
+    last_name: order.shipping_address?.last_name || ".",
+    address1: newAddress,
+    city: order.shipping_address?.city || "",
+    phone: order.shipping_address?.phone || order.phone || "",
+  };
+  const note = `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`;
+  const tags = mergeTags(order.tags, [
+    "Address Updated",
+    "Order Confirmed",
+    "COD Confirmed",
+  ]);
+
+  // First try WITH the stored country. Some stores (e.g. dev/test stores that
+  // don't have the country in their shipping zones) reject it with
+  // "Country/region not supported" — in that case retry WITHOUT country_code so
+  // the address still updates. Real merchant stores keep the country.
+  let result = await shopifyReq(
+    shop,
+    shopData.accessToken,
+    `orders/${order.id}.json`,
+    "PUT",
+    {
+      order: {
+        id: order.id,
+        tags,
+        note,
+        shipping_address: {
+          ...baseAddr,
+          country_code: order.shipping_address?.country_code || "PK",
+        },
       },
-      note: `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`,
     },
-  });
+  );
+
+  if (result?.errors) {
+    console.error(
+      `[WA] address PUT failed, retrying without country_code → ${JSON.stringify(result.errors).slice(0, 200)}`,
+    );
+    result = await shopifyReq(
+      shop,
+      shopData.accessToken,
+      `orders/${order.id}.json`,
+      "PUT",
+      { order: { id: order.id, tags, note, shipping_address: baseAddr } },
+    );
+  }
+
+  if (result?.errors) {
+    await sendMessage(
+      shop,
+      phone,
+      `⚠️ Address couldn't be saved automatically. Our team will update it manually. Order *${order.name}* is confirmed.`,
+    );
+    return;
+  }
+
   await sendMessage(
     shop,
     phone,
