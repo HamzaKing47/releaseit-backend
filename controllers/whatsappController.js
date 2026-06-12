@@ -535,6 +535,11 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   //    block updates. Some dev/test stores reject the country with
   //    "Country/region not supported" — we retry without country_code, then give
   //    up quietly because step 1 already captured the address in the note.
+  // COD → billing is the same as shipping, so update both together.
+  const withCountry = {
+    ...baseAddr,
+    country_code: order.shipping_address?.country_code || "PK",
+  };
   let addrResult = await shopifyReq(
     shop,
     shopData.accessToken,
@@ -543,10 +548,8 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
     {
       order: {
         id: order.id,
-        shipping_address: {
-          ...baseAddr,
-          country_code: order.shipping_address?.country_code || "PK",
-        },
+        shipping_address: withCountry,
+        billing_address: withCountry,
       },
     },
   );
@@ -557,7 +560,13 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
       shopData.accessToken,
       `orders/${order.id}.json`,
       "PUT",
-      { order: { id: order.id, shipping_address: baseAddr } },
+      {
+        order: {
+          id: order.id,
+          shipping_address: baseAddr,
+          billing_address: baseAddr,
+        },
+      },
     );
   }
 
