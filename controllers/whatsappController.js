@@ -495,15 +495,19 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
         "Order Confirmed",
         "COD Confirmed",
       ]),
-      // Shopify silently DROPS a shipping address with no name, so always
-      // carry a recipient name through (fall back to the customer's name).
+      // Send the SAME clean/minimal address shape that succeeds on create.
+      // Spreading the full address Shopify returned (province_code, country,
+      // lat/long, etc.) makes the PUT fail validation → the old address sticks.
       shipping_address: {
-        ...(order.shipping_address || {}),
         first_name:
           order.shipping_address?.first_name ||
           order.customer?.first_name ||
           "Customer",
+        last_name: order.shipping_address?.last_name || ".",
         address1: newAddress,
+        city: order.shipping_address?.city || "",
+        country_code: order.shipping_address?.country_code || "PK",
+        phone: order.shipping_address?.phone || order.phone || "",
       },
       note: `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`,
     },
