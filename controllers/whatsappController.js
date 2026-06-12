@@ -372,7 +372,14 @@ export const registerMessageHandler = (shop) => {
         const rest = raw.slice(8).trim();
         const sp = rest.search(/\s/);
         const orderCode = (sp === -1 ? rest : rest.slice(0, sp)).trim();
-        const newAddress = sp === -1 ? "" : rest.slice(sp + 1).trim();
+        // Strip any < > the customer copied from the "<your new address>" hint.
+        const newAddress =
+          sp === -1
+            ? ""
+            : rest
+                .slice(sp + 1)
+                .replace(/[<>]/g, "")
+                .trim();
         await handleAddress(shop, phone, orderCode, newAddress);
       }
       // Free text without a command is ignored — we can't reliably match an
@@ -488,7 +495,16 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
         "Order Confirmed",
         "COD Confirmed",
       ]),
-      shipping_address: { ...order.shipping_address, address1: newAddress },
+      // Shopify silently DROPS a shipping address with no name, so always
+      // carry a recipient name through (fall back to the customer's name).
+      shipping_address: {
+        ...(order.shipping_address || {}),
+        first_name:
+          order.shipping_address?.first_name ||
+          order.customer?.first_name ||
+          "Customer",
+        address1: newAddress,
+      },
       note: `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`,
     },
   });
