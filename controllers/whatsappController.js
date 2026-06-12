@@ -360,18 +360,24 @@ export const registerMessageHandler = (shop) => {
 
   onMessage(shop, async ({ phone, text }) => {
     try {
-      const msg = text.trim().toUpperCase();
-      if (msg.startsWith("CONFIRM-"))
-        await handleConfirm(shop, phone, msg.replace("CONFIRM-", "").trim());
-      else if (msg.startsWith("ADDRESS-"))
-        await handleAddressRequest(
-          shop,
-          phone,
-          msg.replace("ADDRESS-", "").trim(),
-        );
-      else if (msg.startsWith("CANCEL-"))
-        await handleCancel(shop, phone, msg.replace("CANCEL-", "").trim());
-      else await handleAddressReceived(shop, phone, text);
+      const raw = (text || "").trim();
+      const upper = raw.toUpperCase();
+      if (upper.startsWith("CONFIRM-")) {
+        await handleConfirm(shop, phone, raw.slice(8).trim());
+      } else if (upper.startsWith("CANCEL-")) {
+        await handleCancel(shop, phone, raw.slice(7).trim());
+      } else if (upper.startsWith("ADDRESS-")) {
+        // "ADDRESS-1023" (ask for new address) OR
+        // "ADDRESS-1023 House 5, Lahore" (update in one step)
+        const rest = raw.slice(8).trim();
+        const sp = rest.search(/\s/);
+        const orderCode = (sp === -1 ? rest : rest.slice(0, sp)).trim();
+        const newAddress = sp === -1 ? "" : rest.slice(sp + 1).trim();
+        await handleAddress(shop, phone, orderCode, newAddress);
+      }
+      // Free text without a command is ignored — we can't reliably match an
+      // order to a privacy-masked (LID) sender, so the address must be sent
+      // together with the ADDRESS-<code> command.
     } catch (err) {
       console.error("[WA] Handler:", err.message);
     }
@@ -443,74 +449,49 @@ const handleConfirm = async (shop, phone, orderCode) => {
   console.log(`[WA] ✅ Confirmed: ${order.name}`);
 };
 
-const handleAddressRequest = async (shop, phone, orderCode) => {
+// Unified address handler. Works in ONE step (customer sends the new address
+// together with the command) — robust against WhatsApp's privacy "LID" which
+// breaks phone-based order matching. If no address is supplied, it shows the
+// current address and tells the customer exactly how to resend with it.
+const handleAddress = async (shop, phone, orderCode, newAddress) => {
   const { shopData, order } = await findOrder(shop, phone, orderCode);
-  if (order) {
-    await shopifyReq(
-      shop,
-      shopData.accessToken,
-      `orders/${order.id}.json`,
-      "PUT",
-      {
-        order: {
-          id: order.id,
-          tags: mergeTags(order.tags, ["Pending Address Update"]),
-        },
-      },
-    );
+  console.log(
+    `[WA] handleAddress orderCode=${orderCode} hasNew=${!!newAddress} → ${order ? order.name : "NOT FOUND"}`,
+  );
+  if (!order) {
+    await sendMessage(shop, phone, "❌ Order not found.");
+    return;
   }
-  const currentAddress = order
-    ? [order.shipping_address?.address1, order.shipping_address?.city]
-        .filter(Boolean)
-        .join(", ")
-    : "";
-  await sendMessage(
-    shop,
-    phone,
-    `📍 *Update Address*\n\nYour current address:\n_${currentAddress || "—"}_\n\nReply with your *new complete address* and we'll update it instantly. ✏️`,
-  );
-};
 
-const handleAddressReceived = async (shop, phone, newAddress) => {
-  const shopData = await Shop.findOne({ shop });
-  if (!shopData) return;
-  const data = await shopifyReq(
-    shop,
-    shopData.accessToken,
-    "orders.json?status=open&limit=10",
-  );
-  const np = phone.replace(/\D/g, "");
-  const order = data.orders?.find((o) => {
-    const op = (o.shipping_address?.phone || o.customer?.phone || "").replace(
-      /\D/g,
-      "",
+  // Step 1: no new address yet → show current + ask them to resend with it.
+  if (!newAddress) {
+    const current = [
+      order.shipping_address?.address1,
+      order.shipping_address?.city,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    await sendMessage(
+      shop,
+      phone,
+      `📍 *Update Address*\n\nYour current address:\n_${current || "—"}_\n\nTo change it, send this in one message:\n*ADDRESS-${orderCode} <your new address>*\n\nExample:\nADDRESS-${orderCode} House 5, Street 4, Lahore`,
     );
-    return (
-      op.slice(-10) === np.slice(-10) &&
-      o.tags?.includes("Pending Address Update")
-    );
-  });
-  if (!order) return;
-  const tags = order.tags
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t && t !== "Pending Address Update")
-    .concat(["Address Updated", "Order Confirmed", "COD Confirmed"])
-    .join(", ");
-  await shopifyReq(
-    shop,
-    shopData.accessToken,
-    `orders/${order.id}.json`,
-    "PUT",
-    {
-      order: {
-        id: order.id,
-        tags,
-        shipping_address: { ...order.shipping_address, address1: newAddress },
-        note: `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`,
-      },
+    return;
+  }
+
+  // Step 2: new address provided → update directly.
+  await shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
+    order: {
+      id: order.id,
+      tags: mergeTags(order.tags, [
+        "Address Updated",
+        "Order Confirmed",
+        "COD Confirmed",
+      ]),
+      shipping_address: { ...order.shipping_address, address1: newAddress },
+      note: `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`,
     },
-  );
+  });
   await sendMessage(
     shop,
     phone,

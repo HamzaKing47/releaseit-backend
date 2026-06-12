@@ -372,18 +372,12 @@ export const handleWebhookEvent = (body) => {
       )
         return;
 
-      // Prefer the real phone number — WhatsApp sometimes delivers
-      // a LID (Linked Device ID) instead of @c.us. Try payload.author or
-      // payload._data.notifyName fallbacks where WAHA exposes them.
-      let phone =
-        payload.participant?.replace(/@.*$/, "") ||
-        payload.author?.replace(/@.*$/, "") ||
-        from.replace(/@.*$/, "");
+      // Keep the FULL chat id (e.g. ...@c.us or ...@lid) so the bot can reply
+      // to the exact chat. WhatsApp's privacy "LID" can't be reconstructed as a
+      // phone number, so replying to a stripped LID never reaches the user.
+      let phone = payload.participant || payload.author || from;
 
-      // LIDs are >12 digits and end with @lid in newer WAHA versions.
-      // We still pass them through so handlers can match on last 10 digits,
-      // but log a clear hint.
-      const isLid = from.endsWith("@lid") || phone.length > 13;
+      const isLid = from.endsWith("@lid");
       const text = (payload.body || "").toString().trim();
       if (!phone || !text) return;
       console.log(
@@ -434,7 +428,12 @@ export const reconnectAllShops = async () => {
    Phone helpers (same as baileyService)
    ────────────────────────────────────────────── */
 export const formatChatId = (phone) => {
-  let n = (phone || "").toString().replace(/\D/g, "");
+  const s = (phone || "").toString();
+  // Already a full chat id (e.g. ...@c.us or ...@lid) → reply to that exact
+  // chat. WhatsApp's privacy "LID" can't be turned into a c.us number, so we
+  // must reply to the original chat id we received the message from.
+  if (s.includes("@")) return s;
+  let n = s.replace(/\D/g, "");
   if (n.startsWith("0") && n.length === 11) n = "92" + n.slice(1);
   if (n.length === 10) n = "92" + n;
   return `${n}@c.us`;

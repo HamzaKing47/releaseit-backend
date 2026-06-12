@@ -116,25 +116,21 @@ export const createOrder = async (req, res) => {
         first_name: name,
         last_name: ".",
       },
+      // Name & phone are intentionally omitted from the addresses — they're
+      // already shown in the order's Customer + Contact information sections.
       shipping_address: {
-        first_name: name,
-        last_name: ".",
         address1: address,
         city: city,
         province: "Punjab",
         country: "Pakistan",
         country_code: "PK",
-        phone: formatPhone(phone),
       },
       billing_address: {
-        first_name: name,
-        last_name: ".",
         address1: address,
         city: city,
         province: "Punjab",
         country: "Pakistan",
         country_code: "PK",
-        phone: formatPhone(phone),
       },
       financial_status: "pending",
       // Order-level phone/email → shows in the order's "Contact information".
