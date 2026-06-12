@@ -1,4 +1,8 @@
-import { createShopifyOrder, getProducts } from "../services/shopifyService.js";
+import {
+  createShopifyOrder,
+  getProducts,
+  updateShopifyOrder,
+} from "../services/shopifyService.js";
 import Shop from "../models/Shop.js";
 import Pixel from "../models/Pixel.js";
 import { fireServerSideEvents } from "../services/conversionsService.js";
@@ -116,23 +120,23 @@ export const createOrder = async (req, res) => {
         first_name: name,
         last_name: ".",
       },
-      // Shopify DROPS a shipping address that has no name, so the recipient
-      // name (and phone, for courier labels) must stay here.
+      // Shopify silently DROPS the WHOLE address if any field fails validation.
+      // We send only the safe minimum: name + address1 + city + country_code.
+      // (province "Punjab" / the redundant country string were causing Shopify
+      // to reject the entire address → "No shipping address provided".)
       shipping_address: {
         first_name: name,
+        last_name: ".",
         address1: address,
         city: city,
-        province: "Punjab",
-        country: "Pakistan",
         country_code: "PK",
         phone: formatPhone(phone),
       },
       billing_address: {
         first_name: name,
+        last_name: ".",
         address1: address,
         city: city,
-        province: "Punjab",
-        country: "Pakistan",
         country_code: "PK",
         phone: formatPhone(phone),
       },
@@ -164,6 +168,24 @@ export const createOrder = async (req, res) => {
           : "null"
       }`,
     );
+
+    // 🩹 If Shopify dropped the address, retry via PUT and log the EXACT
+    // validation error it returns (instead of guessing which field is bad).
+    if (order?.id && !order?.shipping_address) {
+      const repair = await updateShopifyOrder(shop, order.id, {
+        shipping_address: orderData.shipping_address,
+        billing_address: orderData.billing_address,
+      });
+      if (repair.ok && repair.data?.order?.shipping_address) {
+        order.shipping_address = repair.data.order.shipping_address;
+        console.log(`[Order] 🩹 shipping repaired via PUT for ${order.name}`);
+      } else {
+        console.error(
+          `[Order] ❌ shipping STILL dropped for ${order.name} — Shopify says:`,
+          JSON.stringify(repair.errors),
+        );
+      }
+    }
 
     // 1.5️⃣ Log the order for fraud rate-limiting (non-blocking)
     logOrder(shop, {
