@@ -150,6 +150,21 @@ export const createOrder = async (req, res) => {
     const result = await createShopifyOrder(shop, orderData);
     const order = result.order;
 
+    // 🔎 Diagnostic: did Shopify keep the shipping address we sent? If this logs
+    // `shipping=null`, Shopify dropped it (almost always a missing/invalid field).
+    console.log(
+      `[Order] ✅ created ${order?.name} — shipping=${
+        order?.shipping_address
+          ? JSON.stringify({
+              name: order.shipping_address.first_name,
+              address1: order.shipping_address.address1,
+              city: order.shipping_address.city,
+              province: order.shipping_address.province,
+            })
+          : "null"
+      }`,
+    );
+
     // 1.5️⃣ Log the order for fraud rate-limiting (non-blocking)
     logOrder(shop, {
       email,
