@@ -527,32 +527,29 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   //    block updates. Some dev/test stores reject the country with
   //    "Country/region not supported" — we retry without country_code, then give
   //    up quietly because step 1 already captured the address in the note.
-  // COD → billing must stay IDENTICAL to shipping. We send both in ONE PUT with
-  // the exact same object (mirroring how the order was created), which is what
-  // makes Shopify show "Same as shipping address". Try with the stored country
-  // first; dev/test stores that reject the country get a retry without it.
+  // Only SHIPPING is updated — that's the address the courier uses. Shopify's
+  // API silently ignores billing_address changes on an existing order (it
+  // returns success but doesn't apply them), and COD never uses billing anyway,
+  // so we leave billing untouched. Try with the stored country first; dev/test
+  // stores that reject the country get a retry without it.
   const withCountry = {
     ...baseAddr,
     country_code: order.shipping_address?.country_code || "PK",
   };
 
-  const putBoth = async (addr) =>
+  const putShipping = async (addr) =>
     shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
-      order: {
-        id: order.id,
-        shipping_address: addr,
-        billing_address: addr,
-      },
+      order: { id: order.id, shipping_address: addr },
     });
 
-  let addrResult = await putBoth(withCountry);
-  if (addrResult?.errors) addrResult = await putBoth(baseAddr);
+  let addrResult = await putShipping(withCountry);
+  if (addrResult?.errors) addrResult = await putShipping(baseAddr);
   if (addrResult?.errors) {
     console.error(
-      `[WA] address not writable on this store — note still has it: ${JSON.stringify(addrResult.errors).slice(0, 150)}`,
+      `[WA] shipping not writable on this store — note still has it: ${JSON.stringify(addrResult.errors).slice(0, 150)}`,
     );
   } else {
-    console.log(`[WA] shipping+billing updated for ${order.name}`);
+    console.log(`[WA] shipping updated for ${order.name}`);
   }
 
   // The address is recorded either way (note, and structured field on supported
