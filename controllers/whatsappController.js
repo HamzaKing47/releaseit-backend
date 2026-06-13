@@ -503,7 +503,9 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
       order.customer?.first_name ||
       "Customer",
     last_name: order.shipping_address?.last_name || ".",
-    address1: newAddress,
+    // Prefix so the merchant/courier instantly sees this is the customer's
+    // corrected address (vs the original one captured at order placement).
+    address1: `Updated address: ${newAddress}`,
     city: order.shipping_address?.city || "",
     phone: order.shipping_address?.phone || order.phone || "",
   };
