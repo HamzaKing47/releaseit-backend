@@ -318,8 +318,10 @@ export const sendOrderConfirmation = async (shop, order) => {
     const confirmLink = storeNum
       ? `https://wa.me/${storeNum}?text=CONFIRM-${orderCode}`
       : null;
+    // Pre-fill the code WITH a trailing space so the customer can immediately
+    // type their new address after it (one message, no back-and-forth).
     const addressLink = storeNum
-      ? `https://wa.me/${storeNum}?text=ADDRESS-${orderCode}`
+      ? `https://wa.me/${storeNum}?text=${encodeURIComponent(`ADDRESS-${orderCode} `)}`
       : null;
     const cancelLink = storeNum
       ? `https://wa.me/${storeNum}?text=CANCEL-${orderCode}`
@@ -337,7 +339,10 @@ export const sendOrderConfirmation = async (shop, order) => {
     if (storeNum) {
       message = message
         .replace("1️⃣ - Confirm Order", `✅ *Confirm Order:*\n${confirmLink}`)
-        .replace("2️⃣ - Update Address", `📍 *Update Address:*\n${addressLink}`)
+        .replace(
+          "2️⃣ - Update Address",
+          `📍 *Update Address:*\n${addressLink}\n_Tap the link, then type your new address after the code and send. Example:_\n*ADDRESS-${orderCode} House 5, Lahore*`,
+        )
         .replace("3️⃣ - Cancel Order", `❌ *Cancel Order:*\n${cancelLink}`);
     }
 
@@ -489,21 +494,9 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   // Step 2: new address provided → update directly.
   // Clean/minimal address (no province/lat/long) — spreading the full address
   // Shopify returns makes the PUT fail validation.
-  // The customer sends their COMPLETE new address as one line → it all goes into
-  // address1. Shopify REQUIRES a city, so derive it from that line (the part
-  // after the last comma, else the last word) instead of keeping the stale old
-  // city. e.g. "House 5, Street 4, Lahore" → "Lahore"; "House 5 Lahore" → "Lahore".
-  const addrParts = newAddress
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const derivedCity =
-    addrParts.length > 1
-      ? addrParts[addrParts.length - 1]
-      : newAddress.trim().split(/\s+/).pop() ||
-        order.shipping_address?.city ||
-        "";
-
+  // Only the street address (address1) changes. Shopify REQUIRES a city, so we
+  // KEEP the order's existing city as the default. If the customer's new line
+  // includes a city it lives inside address1; otherwise the original city stays.
   const baseAddr = {
     first_name:
       order.shipping_address?.first_name ||
@@ -511,8 +504,7 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
       "Customer",
     last_name: order.shipping_address?.last_name || ".",
     address1: newAddress,
-    address2: "",
-    city: derivedCity,
+    city: order.shipping_address?.city || "",
     phone: order.shipping_address?.phone || order.phone || "",
   };
   const note = `📍 Address updated via WhatsApp:\n${newAddress}\n\n— Order Now COD form and Upsells`;
