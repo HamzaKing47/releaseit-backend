@@ -25,9 +25,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CYCLE_DAYS = 30;
 const CYCLE_MS = CYCLE_DAYS * DAY_MS;
 
-// Monthly message allowance per plan.
+// Monthly message allowance per plan. The FREE limit is env-overridable so we
+// can drop it to e.g. 10 for testing the paywall without a code change
+// (set FREE_MESSAGE_LIMIT=10 in the backend env); defaults to 50 in production.
 export const PLAN_LIMITS = {
-  free: 50,
+  free: Number(process.env.FREE_MESSAGE_LIMIT) || 50,
   starter: 1000,
   growth: 3000,
   pro: 7500,
