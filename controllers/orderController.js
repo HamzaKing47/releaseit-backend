@@ -132,10 +132,18 @@ export const createOrder = async (req, res) => {
         country_code: "PK",
         phone: formatPhone(phone),
       },
-      // NOTE: we intentionally DON'T set billing_address. With no explicit
-      // billing address, Shopify links billing to shipping and shows "Same as
-      // shipping address" — and it auto-follows any later shipping update, so we
-      // never have to touch billing (avoids a stale/duplicate billing address).
+      // Billing must EQUAL shipping. Shopify only shows "Same as shipping
+      // address" when an identical billing address exists; omitting it shows
+      // "No billing address provided". We keep them in sync (here and on the
+      // WhatsApp address update) so billing always reads "Same as shipping".
+      billing_address: {
+        first_name: name,
+        last_name: ".",
+        address1: address,
+        city: city,
+        country_code: "PK",
+        phone: formatPhone(phone),
+      },
       financial_status: "pending",
       // Order-level phone/email → shows in the order's "Contact information".
       // (We deliberately don't set customer.phone to avoid Shopify's unique
