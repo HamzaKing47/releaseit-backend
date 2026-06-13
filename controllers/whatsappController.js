@@ -527,46 +527,33 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   //    block updates. Some dev/test stores reject the country with
   //    "Country/region not supported" — we retry without country_code, then give
   //    up quietly because step 1 already captured the address in the note.
-  // COD → billing is the same as shipping. Shopify can silently ignore
-  // billing_address when it shares a PUT with shipping_address, so we write each
-  // field in its OWN PUT. Try with the stored country first, retry without it
-  // (dev/test stores reject unsupported countries), then log if it still fails.
+  // COD → billing must stay IDENTICAL to shipping. We send both in ONE PUT with
+  // the exact same object (mirroring how the order was created), which is what
+  // makes Shopify show "Same as shipping address". Try with the stored country
+  // first; dev/test stores that reject the country get a retry without it.
   const withCountry = {
     ...baseAddr,
     country_code: order.shipping_address?.country_code || "PK",
   };
 
-  const putAddrField = async (field) => {
-    let r = await shopifyReq(
-      shop,
-      shopData.accessToken,
-      `orders/${order.id}.json`,
-      "PUT",
-      { order: { id: order.id, [field]: withCountry } },
-    );
-    if (r?.errors) {
-      r = await shopifyReq(
-        shop,
-        shopData.accessToken,
-        `orders/${order.id}.json`,
-        "PUT",
-        { order: { id: order.id, [field]: baseAddr } },
-      );
-    }
-    if (r?.errors) {
-      console.error(
-        `[WA] ${field} not writable on this store — note still has it: ${JSON.stringify(r.errors).slice(0, 150)}`,
-      );
-    } else {
-      console.log(`[WA] ${field} updated for ${order.name}`);
-    }
-    return r;
-  };
+  const putBoth = async (addr) =>
+    shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
+      order: {
+        id: order.id,
+        shipping_address: addr,
+        billing_address: addr,
+      },
+    });
 
-  // Keep billing identical to shipping so Shopify keeps showing "Same as
-  // shipping address" (instead of a stale/duplicate billing address).
-  await putAddrField("shipping_address");
-  await putAddrField("billing_address");
+  let addrResult = await putBoth(withCountry);
+  if (addrResult?.errors) addrResult = await putBoth(baseAddr);
+  if (addrResult?.errors) {
+    console.error(
+      `[WA] address not writable on this store — note still has it: ${JSON.stringify(addrResult.errors).slice(0, 150)}`,
+    );
+  } else {
+    console.log(`[WA] shipping+billing updated for ${order.name}`);
+  }
 
   // The address is recorded either way (note, and structured field on supported
   // stores) → always confirm to the customer.
