@@ -563,8 +563,9 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
     return r;
   };
 
+  // Only shipping is updated. Billing is never set explicitly (see order
+  // creation), so Shopify keeps it linked as "Same as shipping address".
   await putAddrField("shipping_address");
-  await putAddrField("billing_address");
 
   // The address is recorded either way (note, and structured field on supported
   // stores) → always confirm to the customer.
