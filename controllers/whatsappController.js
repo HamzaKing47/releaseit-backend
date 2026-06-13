@@ -527,46 +527,44 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
   //    block updates. Some dev/test stores reject the country with
   //    "Country/region not supported" — we retry without country_code, then give
   //    up quietly because step 1 already captured the address in the note.
-  // COD → billing is the same as shipping, so update both together.
+  // COD → billing is the same as shipping. Shopify can silently ignore
+  // billing_address when it shares a PUT with shipping_address, so we write each
+  // field in its OWN PUT. Try with the stored country first, retry without it
+  // (dev/test stores reject unsupported countries), then log if it still fails.
   const withCountry = {
     ...baseAddr,
     country_code: order.shipping_address?.country_code || "PK",
   };
-  let addrResult = await shopifyReq(
-    shop,
-    shopData.accessToken,
-    `orders/${order.id}.json`,
-    "PUT",
-    {
-      order: {
-        id: order.id,
-        shipping_address: withCountry,
-        billing_address: withCountry,
-      },
-    },
-  );
 
-  if (addrResult?.errors) {
-    addrResult = await shopifyReq(
+  const putAddrField = async (field) => {
+    let r = await shopifyReq(
       shop,
       shopData.accessToken,
       `orders/${order.id}.json`,
       "PUT",
-      {
-        order: {
-          id: order.id,
-          shipping_address: baseAddr,
-          billing_address: baseAddr,
-        },
-      },
+      { order: { id: order.id, [field]: withCountry } },
     );
-  }
+    if (r?.errors) {
+      r = await shopifyReq(
+        shop,
+        shopData.accessToken,
+        `orders/${order.id}.json`,
+        "PUT",
+        { order: { id: order.id, [field]: baseAddr } },
+      );
+    }
+    if (r?.errors) {
+      console.error(
+        `[WA] ${field} not writable on this store — note still has it: ${JSON.stringify(r.errors).slice(0, 150)}`,
+      );
+    } else {
+      console.log(`[WA] ${field} updated for ${order.name}`);
+    }
+    return r;
+  };
 
-  if (addrResult?.errors) {
-    console.error(
-      `[WA] structured shipping_address not writable on this store — recorded in note instead: ${JSON.stringify(addrResult.errors).slice(0, 200)}`,
-    );
-  }
+  await putAddrField("shipping_address");
+  await putAddrField("billing_address");
 
   // The address is recorded either way (note, and structured field on supported
   // stores) → always confirm to the customer.
