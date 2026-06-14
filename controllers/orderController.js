@@ -7,6 +7,7 @@ import Shop from "../models/Shop.js";
 import Pixel from "../models/Pixel.js";
 import { fireServerSideEvents } from "../services/conversionsService.js";
 import { checkFraud, logOrder } from "../services/fraudService.js";
+import { canCreateOrder, recordOrder } from "../services/messageUsage.js";
 
 const formatPhone = (phone) => {
   if (!phone) return phone;
@@ -51,6 +52,21 @@ export const createOrder = async (req, res) => {
         success: false,
         blocked: true,
         message: fraud.message,
+      });
+    }
+
+    // 📦 Plan order limit — block new COD orders once the monthly quota is hit
+    // (Free 60 / Starter 420 / Growth 10k / Pro unlimited). Merchant upgrades to lift it.
+    const orderQuota = await canCreateOrder(shop);
+    if (!orderQuota.allowed) {
+      console.log(
+        `[Billing] 🚫 order limit reached (${shop}): ${orderQuota.used}/${orderQuota.limit} on ${orderQuota.plan}`,
+      );
+      return res.status(402).json({
+        success: false,
+        limitReached: true,
+        message:
+          "This store has reached its monthly order limit. Please try again later.",
       });
     }
 
@@ -190,6 +206,9 @@ export const createOrder = async (req, res) => {
         );
       }
     }
+
+    // 1.5️⃣ Count this order against the plan's monthly quota (non-blocking)
+    recordOrder(shop).catch(() => {});
 
     // 1.5️⃣ Log the order for fraud rate-limiting (non-blocking)
     logOrder(shop, {

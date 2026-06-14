@@ -21,7 +21,11 @@
    ────────────────────────────────────────────────────────────── */
 
 import Shop from "../models/Shop.js";
-import { setPlan, PLAN_LIMITS } from "../services/messageUsage.js";
+import {
+  setPlan,
+  PLAN_LIMITS,
+  PLAN_ORDER_LIMITS,
+} from "../services/messageUsage.js";
 
 const API_VERSION = "2024-01";
 
@@ -46,6 +50,7 @@ export const PLANS = {
     price: 0,
     interval: "EVERY_30_DAYS",
     messageLimit: PLAN_LIMITS.free,
+    orderLimit: PLAN_ORDER_LIMITS.free,
   },
   starter: {
     key: "starter",
@@ -53,6 +58,7 @@ export const PLANS = {
     price: 9.99,
     interval: "EVERY_30_DAYS",
     messageLimit: PLAN_LIMITS.starter,
+    orderLimit: PLAN_ORDER_LIMITS.starter,
   },
   growth: {
     key: "growth",
@@ -60,6 +66,7 @@ export const PLANS = {
     price: 19.99,
     interval: "EVERY_30_DAYS",
     messageLimit: PLAN_LIMITS.growth,
+    orderLimit: PLAN_ORDER_LIMITS.growth,
   },
   pro: {
     key: "pro",
@@ -67,6 +74,7 @@ export const PLANS = {
     price: 34.99,
     interval: "EVERY_30_DAYS",
     messageLimit: PLAN_LIMITS.pro,
+    orderLimit: PLAN_ORDER_LIMITS.pro, // Infinity → unlimited
   },
 };
 

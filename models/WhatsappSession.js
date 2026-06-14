@@ -30,6 +30,10 @@ const whatsappSessionSchema = new mongoose.Schema({
   messagesSent: { type: Number, default: 0 }, // messages sent in current cycle
   cycleStartDate: { type: Date, default: Date.now }, // when current cycle began
 
+  // ── COD order usage (tiered: Free 60 / Starter 420 / Growth 10k / Pro ∞) ──
+  ordersUsed: { type: Number, default: 0 }, // COD orders created in current cycle
+  orderCycleStartDate: { type: Date, default: Date.now }, // when order cycle began
+
   // ── Daily cap + warm-up (protects the WhatsApp number from bans) ──
   dailySent: { type: Number, default: 0 }, // messages sent today
   dailyResetDate: { type: Date, default: Date.now }, // start of the current day-window

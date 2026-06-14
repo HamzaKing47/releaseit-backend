@@ -35,6 +35,15 @@ export const PLAN_LIMITS = {
   pro: 7500,
 };
 
+// Monthly COD order allowance per plan. Pro is effectively unlimited.
+// Free limit is env-overridable (ORDER_FREE_LIMIT) for quick paywall testing.
+export const PLAN_ORDER_LIMITS = {
+  free: Number(process.env.ORDER_FREE_LIMIT) || 60,
+  starter: 420,
+  growth: 10000,
+  pro: Infinity,
+};
+
 // Per-day ceiling per plan. Deliberately set ABOVE the monthly
 // average (limit / 30) so merchants can handle sale-day spikes,
 // but capped to stay in the "usually safe" zone for unofficial
@@ -69,6 +78,19 @@ const rollCycleIfNeeded = (session) => {
   if (Date.now() - start >= CYCLE_MS) {
     session.messagesSent = 0;
     session.cycleStartDate = new Date();
+    return true;
+  }
+  return false;
+};
+
+// Roll the 30-day ORDER cycle if it has elapsed.
+const rollOrderCycleIfNeeded = (session) => {
+  const start = session.orderCycleStartDate
+    ? new Date(session.orderCycleStartDate).getTime()
+    : 0;
+  if (Date.now() - start >= CYCLE_MS) {
+    session.ordersUsed = 0;
+    session.orderCycleStartDate = new Date();
     return true;
   }
   return false;
@@ -113,6 +135,7 @@ const getEffectiveDailyCap = (session) => {
 const refreshSession = async (session) => {
   let changed = false;
   if (rollCycleIfNeeded(session)) changed = true;
+  if (rollOrderCycleIfNeeded(session)) changed = true;
   if (rollDayIfNeeded(session)) changed = true;
   // Lazy-set the connection date so warm-up always has a baseline.
   if (!session.numberConnectedDate) {
@@ -170,6 +193,50 @@ export const recordMessageSent = async (shop) => {
 };
 
 /**
+ * Can this shop create another COD order this cycle?
+ * Passes if BELOW the plan's monthly order limit (Pro = unlimited).
+ * Fails OPEN on DB errors so a transient hiccup never blocks a sale.
+ * Returns { allowed, used, limit, plan }.
+ */
+export const canCreateOrder = async (shop) => {
+  try {
+    let session = await WhatsappSession.findOne({ shop });
+    if (!session) {
+      // No session yet → treat as free tier, allow (counter starts on first order).
+      return {
+        allowed: true,
+        used: 0,
+        limit: PLAN_ORDER_LIMITS.free,
+        plan: "free",
+      };
+    }
+    session = await refreshSession(session);
+    const plan = session.plan || "free";
+    const limit = PLAN_ORDER_LIMITS[plan] ?? PLAN_ORDER_LIMITS.free;
+    const used = session.ordersUsed || 0;
+    return { allowed: used < limit, used, limit, plan };
+  } catch (err) {
+    console.error(`[Usage] canCreateOrder error (${shop}): ${err.message}`);
+    return { allowed: true, used: 0, limit: PLAN_ORDER_LIMITS.free, plan: "free" }; // fail open
+  }
+};
+
+/**
+ * Record one COD order — bumps the order counter for the cycle.
+ */
+export const recordOrder = async (shop) => {
+  try {
+    await WhatsappSession.findOneAndUpdate(
+      { shop },
+      { $inc: { ordersUsed: 1 } },
+      { upsert: true },
+    );
+  } catch (err) {
+    console.error(`[Usage] recordOrder error (${shop}): ${err.message}`);
+  }
+};
+
+/**
  * Mark the moment a number connected — starts the warm-up clock.
  * Idempotent: only sets the date if it isn't already set.
  * Call this from the WhatsApp "connected" handler.
@@ -222,6 +289,9 @@ export const getUsage = async (shop) => {
       dailyCap: PLAN_DAILY_CAPS.free,
       warmingUp: false,
       warmupDaysLeft: 0,
+      orderLimit: PLAN_ORDER_LIMITS.free,
+      ordersUsed: 0,
+      ordersRemaining: PLAN_ORDER_LIMITS.free,
     };
   }
   session = await refreshSession(session);
@@ -261,6 +331,14 @@ export const getUsage = async (shop) => {
     planDailyCap: planCap, // the cap once fully warmed
     warmingUp,
     warmupDaysLeft,
+    // COD order usage for this cycle
+    orderLimit: PLAN_ORDER_LIMITS[session.plan] ?? PLAN_ORDER_LIMITS.free,
+    ordersUsed: session.ordersUsed || 0,
+    ordersRemaining: Math.max(
+      0,
+      (PLAN_ORDER_LIMITS[session.plan] ?? PLAN_ORDER_LIMITS.free) -
+        (session.ordersUsed || 0),
+    ),
   };
 };
 
@@ -274,6 +352,8 @@ export const setPlan = async (shop, plan, resetCycle = false) => {
   if (resetCycle) {
     update.messagesSent = 0;
     update.cycleStartDate = new Date();
+    update.ordersUsed = 0;
+    update.orderCycleStartDate = new Date();
   }
   await WhatsappSession.findOneAndUpdate({ shop }, update, { upsert: true });
   console.log(`[Usage] ${shop} → plan: ${plan} (limit ${limit})`);
