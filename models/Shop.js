@@ -21,6 +21,9 @@ const shopSchema = new mongoose.Schema({
   formSchema: { type: Array, default: [] },
 
   // 🔥 Thank You Page Settings
+  // When false (default) → after a COD order the customer sees Shopify's own
+  // official order-status page. When true → they see our custom page below.
+  thankYouEnabled: { type: Boolean, default: false },
   thankYou: {
     type: Object,
     default: {
