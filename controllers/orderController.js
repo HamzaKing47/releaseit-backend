@@ -166,7 +166,7 @@ export const createOrder = async (req, res) => {
       // phone-per-customer conflict on repeat orders.)
       phone: formatPhone(phone),
       ...(email ? { email } : {}),
-      tags: ["COD", "ReleaseIt", ...boosterTags].join(", "),
+      tags: ["COD", "Order Now", ...boosterTags].join(", "),
       note: "🛒 Order placed via Order Now COD form and Upsells",
     };
 
@@ -218,7 +218,7 @@ export const createOrder = async (req, res) => {
     }).catch(() => {});
 
     // 1.6️⃣ WhatsApp order confirmation (non-blocking). The Shopify orders/create
-    // webhook intentionally skips "ReleaseIt"-tagged orders, so COD-form orders
+    // webhook intentionally skips "Order Now"-tagged orders, so COD-form orders
     // must be messaged here directly. Dynamic import avoids any circular import.
     // Shopify's create-order response does not reliably echo back the shipping
     // phone (we no longer set customer.phone). So build the WhatsApp payload

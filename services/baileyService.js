@@ -50,7 +50,7 @@ export const getOrCreateClient = async (
     auth: state,
     printQRInTerminal: true,
     logger: pino({ level: "warn" }),
-    browser: ["ReleaseIt", "Chrome", "1.0.0"],
+    browser: ["Order Now", "Chrome", "1.0.0"],
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
     connectTimeoutMs: 60000,

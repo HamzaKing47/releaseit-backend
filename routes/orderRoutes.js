@@ -1,6 +1,7 @@
 import express from "express";
 import { createOrder, fetchProducts } from "../controllers/orderController.js";
 import { sendOrderConfirmation } from "../controllers/whatsappController.js";
+import { verifyShopifyWebhook } from "../middleware/verifyShopifyWebhook.js";
 
 const router = express.Router();
 
@@ -8,9 +9,9 @@ router.post("/create-order", createOrder);
 router.get("/products", fetchProducts);
 
 // Shopify orders/create webhook — fires WhatsApp confirmation for ALL orders
-// (native Shopify checkouts too, not just COD form). Register this URL in your
-// Shopify Partner dashboard → App webhooks → orders/create.
-router.post("/orders/webhook", async (req, res) => {
+// (native Shopify checkouts too, not just COD form). HMAC-verified so only
+// genuine Shopify requests are processed.
+router.post("/orders/webhook", verifyShopifyWebhook, async (req, res) => {
   // Ack fast — Shopify retries on non-2xx
   res.status(200).send("OK");
   try {
@@ -20,7 +21,7 @@ router.post("/orders/webhook", async (req, res) => {
 
     // Skip orders we just created via our own COD form (we already messaged them)
     const tags = (order.tags || "").toLowerCase();
-    if (tags.includes("releaseit")) return;
+    if (tags.includes("order now")) return;
 
     await sendOrderConfirmation(shop, order);
   } catch (err) {

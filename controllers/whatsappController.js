@@ -270,7 +270,7 @@ export const sendTestMessage = async (req, res) => {
     await sendMessage(
       shop,
       phone,
-      `✅ *ReleaseIt Test*\n\nWhatsApp automation is working! 🎉`,
+      `✅ *Order Now Test*\n\nWhatsApp automation is working! 🎉`,
     );
     res.json({ success: true });
   } catch (err) {
@@ -564,101 +564,4 @@ const handleAddress = async (shop, phone, orderCode, newAddress) => {
 };
 
 const handleCancel = async (shop, phone, orderCode) => {
-  const { shopData, order } = await findOrder(shop, phone, orderCode);
-  if (!order) {
-    await sendMessage(shop, phone, "❌ Order not found.");
-    return;
-  }
-  // Tag + note before cancelling (the cancel endpoint itself takes no note).
-  await shopifyReq(shop, shopData.accessToken, `orders/${order.id}.json`, "PUT", {
-    order: {
-      id: order.id,
-      tags: mergeTags(order.tags, ["Cancelled by Customer"]),
-      note: `❌ Cancelled by customer via WhatsApp\n\n— Order Now COD form and Upsells`,
-    },
-  });
-  await shopifyReq(
-    shop,
-    shopData.accessToken,
-    `orders/${order.id}/cancel.json`,
-    "POST",
-    { reason: "customer", email: false },
-  );
-  await sendMessage(
-    shop,
-    phone,
-    `❌ *Order Cancelled*\n\nOrder *${order.name}* cancelled. Feel free to order again! 🛍️`,
-  );
-};
-
-const findOrder = async (shop, phone, orderCode) => {
-  const shopData = await Shop.findOne({ shop });
-  if (!shopData) return { shopData: null, order: null };
-  const np = phone.replace(/\D/g, "");
-  if (orderCode) {
-    const d = await shopifyReq(
-      shop,
-      shopData.accessToken,
-      `orders.json?name=%23${orderCode}&status=open`,
-    );
-    if (d.orders?.[0]) return { shopData, order: d.orders[0] };
-  }
-  const d = await shopifyReq(
-    shop,
-    shopData.accessToken,
-    "orders.json?status=open&limit=10",
-  );
-  return {
-    shopData,
-    order:
-      d.orders?.find((o) => {
-        const op = (
-          o.shipping_address?.phone ||
-          o.customer?.phone ||
-          ""
-        ).replace(/\D/g, "");
-        return op.slice(-10) === np.slice(-10);
-      }) || null,
-  };
-};
-
-const mergeTags = (existing, newTags) => {
-  const arr = (existing || "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-  return [...new Set([...arr, ...newTags])].join(", ");
-};
-
-const buildMessage = (template, vars) =>
-  template
-    .replace(/{{name}}/g, vars.name)
-    .replace(/{{orderName}}/g, vars.orderName)
-    .replace(/{{currency}}/g, vars.currency)
-    .replace(/{{total}}/g, vars.total)
-    .replace(/{{address}}/g, vars.address);
-
-const getDefaultTemplate = () => `🛍️ *New Order!*
-
-Hello {{name}}!
-
-📦 *Order:* {{orderName}}
-💰 *Amount:* {{currency}} {{total}}
-📍 *Address:* {{address}}
-
-1️⃣ - Confirm Order
-2️⃣ - Update Address
-3️⃣ - Cancel Order`;
-
-/* ── WEBHOOK (WAHA → us) ── */
-export const handleWebhook = async (req, res) => {
-  // Ack fast — WAHA retries on non-2xx
-  res.status(200).json({ received: true });
-  try {
-    if (PROVIDER === "waha" && handleWebhookEvent) {
-      handleWebhookEvent(req.body);
-    }
-  } catch (err) {
-    console.error("[WA Webhook]", err.message);
-  }
-};
+  const { shopData, order } = await findOrder(shop, phone,

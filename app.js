@@ -10,6 +10,7 @@ import whatsappRoutes from "./routes/whatsappRoutes.js";
 import billingRoutes from "./routes/billingRoutes.js";
 import contactRoutes from "./routes/contactRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
+import complianceRoutes from "./routes/complianceRoutes.js";
 
 const app = express();
 
@@ -30,8 +31,16 @@ app.use(
 // ── CORS ── open, because the COD button/form runs on many storefront domains.
 app.use(cors());
 
-// ── Body parsing ── cap size to avoid abuse.
-app.use(express.json({ limit: "1mb" }));
+// ── Body parsing ── cap size to avoid abuse. We also stash the RAW body so
+// Shopify webhook HMAC signatures can be verified against the exact bytes.
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 
 // ── Rate limiting ── generous per-IP cap to stop abuse without blocking real traffic.
 const apiLimiter = rateLimit({
@@ -56,6 +65,7 @@ app.use("/api", whatsappRoutes);
 app.use("/api", billingRoutes);
 app.use("/api", contactRoutes);
 app.use("/api", sessionRoutes);
+app.use("/api", complianceRoutes);
 
 // ── 404 handler ──
 app.use((req, res) => {
