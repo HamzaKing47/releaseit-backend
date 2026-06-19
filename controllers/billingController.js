@@ -56,7 +56,7 @@ export const PLANS = {
   starter: {
     key: "starter",
     name: "Starter",
-    price: 9.99,
+    price: 8.99,
     interval: "EVERY_30_DAYS",
     messageLimit: PLAN_LIMITS.starter,
     orderLimit: PLAN_ORDER_LIMITS.starter,
@@ -72,7 +72,7 @@ export const PLANS = {
   pro: {
     key: "pro",
     name: "Pro",
-    price: 49.99,
+    price: 54.99,
     interval: "EVERY_30_DAYS",
     messageLimit: PLAN_LIMITS.pro,
     orderLimit: PLAN_ORDER_LIMITS.pro, // Infinity → unlimited
