@@ -116,7 +116,8 @@ const rollDayIfNeeded = (session) => {
 
 // Effective daily cap = min(warm-up cap for current age, plan daily cap).
 const getEffectiveDailyCap = (session) => {
-  const planCap = PLAN_DAILY_CAPS[session.plan] || PLAN_DAILY_CAPS.free;
+  const planCap =
+    PLAN_DAILY_CAPS[session.whatsappPlan] || PLAN_DAILY_CAPS.free;
   if (!session.numberConnectedDate) {
     // Unknown connection date → be conservative (treat as brand new).
     return Math.min(WARMUP_SCHEDULE[0].cap, planCap);
@@ -160,8 +161,8 @@ export const canSendMessage = async (shop) => {
     if (!session) return { allowed: true, reason: "ok" };
     session = await refreshSession(session);
 
-    const monthlyLimit =
-      session.messageLimit || PLAN_LIMITS[session.plan] || PLAN_LIMITS.free;
+    const wplan = session.whatsappPlan || "free";
+    const monthlyLimit = PLAN_LIMITS[wplan] || PLAN_LIMITS.free;
     if ((session.messagesSent || 0) >= monthlyLimit) {
       return { allowed: false, reason: "monthly" };
     }
@@ -279,6 +280,7 @@ export const getUsage = async (shop) => {
   if (!session) {
     return {
       plan: "free",
+      whatsappPlan: "free",
       limit: PLAN_LIMITS.free,
       sent: 0,
       remaining: PLAN_LIMITS.free,
@@ -296,14 +298,14 @@ export const getUsage = async (shop) => {
   }
   session = await refreshSession(session);
 
-  const limit =
-    session.messageLimit || PLAN_LIMITS[session.plan] || PLAN_LIMITS.free;
+  const wplan = session.whatsappPlan || "free";
+  const limit = PLAN_LIMITS[wplan] || PLAN_LIMITS.free;
   const sent = session.messagesSent || 0;
   const start = session.cycleStartDate
     ? new Date(session.cycleStartDate)
     : new Date();
   const dailyCap = getEffectiveDailyCap(session);
-  const planCap = PLAN_DAILY_CAPS[session.plan] || PLAN_DAILY_CAPS.free;
+  const planCap = PLAN_DAILY_CAPS[wplan] || PLAN_DAILY_CAPS.free;
 
   // Warm-up status
   let warmingUp = false;
@@ -320,6 +322,7 @@ export const getUsage = async (shop) => {
 
   return {
     plan: session.plan || "free",
+    whatsappPlan: wplan,
     limit,
     sent,
     remaining: Math.max(0, limit - sent),
@@ -346,15 +349,29 @@ export const getUsage = async (shop) => {
  * Change a shop's plan (e.g. after a Shopify billing upgrade).
  */
 export const setPlan = async (shop, plan, resetCycle = false) => {
-  const limit = PLAN_LIMITS[plan];
-  if (!limit) throw new Error(`Unknown plan: ${plan}`);
-  const update = { plan, messageLimit: limit };
+  if (PLAN_ORDER_LIMITS[plan] === undefined)
+    throw new Error(`Unknown COD plan: ${plan}`);
+  const update = { plan };
   if (resetCycle) {
-    update.messagesSent = 0;
-    update.cycleStartDate = new Date();
     update.ordersUsed = 0;
     update.orderCycleStartDate = new Date();
   }
   await WhatsappSession.findOneAndUpdate({ shop }, update, { upsert: true });
-  console.log(`[Usage] ${shop} → plan: ${plan} (limit ${limit})`);
+  console.log(`[Usage] ${shop} → COD plan: ${plan}`);
+};
+
+/**
+ * Change a shop's WhatsApp (messaging) plan — a separate add-on from COD.
+ */
+export const setWhatsappPlan = async (shop, wplan, resetCycle = false) => {
+  const limit = PLAN_LIMITS[wplan];
+  if (limit === undefined)
+    throw new Error(`Unknown WhatsApp plan: ${wplan}`);
+  const update = { whatsappPlan: wplan, messageLimit: limit };
+  if (resetCycle) {
+    update.messagesSent = 0;
+    update.cycleStartDate = new Date();
+  }
+  await WhatsappSession.findOneAndUpdate({ shop }, update, { upsert: true });
+  console.log(`[Usage] ${shop} → WhatsApp plan: ${wplan} (limit ${limit})`);
 };

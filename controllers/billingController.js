@@ -23,6 +23,7 @@
 import Shop from "../models/Shop.js";
 import {
   setPlan,
+  setWhatsappPlan,
   PLAN_LIMITS,
   PLAN_ORDER_LIMITS,
 } from "../services/messageUsage.js";
@@ -78,6 +79,39 @@ export const PLANS = {
   },
 };
 
+// WhatsApp add-on plans — SEPARATE from COD. A merchant only pays these if they
+// turn WhatsApp on. Message limits mirror PLAN_LIMITS.
+export const WHATSAPP_PLANS = {
+  free: {
+    key: "free",
+    name: "Free",
+    price: 0,
+    interval: "EVERY_30_DAYS",
+    messageLimit: PLAN_LIMITS.free,
+  },
+  starter: {
+    key: "starter",
+    name: "WhatsApp Starter",
+    price: 4.99,
+    interval: "EVERY_30_DAYS",
+    messageLimit: PLAN_LIMITS.starter,
+  },
+  growth: {
+    key: "growth",
+    name: "WhatsApp Growth",
+    price: 9.99,
+    interval: "EVERY_30_DAYS",
+    messageLimit: PLAN_LIMITS.growth,
+  },
+  pro: {
+    key: "pro",
+    name: "WhatsApp Pro",
+    price: 14.99,
+    interval: "EVERY_30_DAYS",
+    messageLimit: PLAN_LIMITS.pro,
+  },
+};
+
 // In dev/test mode Shopify accepts charges with `test: true` —
 // merchant sees the confirmation flow but no real money moves.
 const IS_TEST = (process.env.SHOPIFY_BILLING_TEST || "true") === "true";
@@ -92,7 +126,8 @@ const BACKEND_URL = (
 export const getPlans = (req, res) => {
   res.json({
     success: true,
-    plans: Object.values(PLANS),
+    plans: Object.values(PLANS), // COD plans
+    whatsappPlans: Object.values(WHATSAPP_PLANS), // WhatsApp add-on plans
     testMode: IS_TEST,
   });
 };
@@ -103,19 +138,23 @@ export const getPlans = (req, res) => {
    No Admin API call, no token needed — avoids the expiring-token issue. */
 export const createSubscription = async (req, res) => {
   try {
-    const { shop, plan } = req.body;
+    // track: "cod" (default) = order plan; "whatsapp" = messaging add-on.
+    const { shop, plan, track = "cod" } = req.body;
     if (!shop || !plan) {
       return res
         .status(400)
         .json({ success: false, message: "shop and plan required" });
     }
-    if (!PLANS[plan]) {
+    const isWa = track === "whatsapp";
+    const catalog = isWa ? WHATSAPP_PLANS : PLANS;
+    const apply = isWa ? setWhatsappPlan : setPlan;
+    if (!catalog[plan]) {
       return res.status(400).json({ success: false, message: "Unknown plan" });
     }
 
     // Free plan → always handled locally.
     if (plan === "free") {
-      await setPlan(shop, "free", true);
+      await apply(shop, "free", true);
       return res.json({
         success: true,
         confirmationUrl: `${FRONTEND_URL}/admin?shop=${shop}&upgraded=free`,
@@ -133,8 +172,8 @@ export const createSubscription = async (req, res) => {
     // The Shopify Billing API requires a published public app with managed
     // pricing configured. Until then, we activate the plan directly so the
     // full plan/usage/limit system is testable and demoable.
-    await setPlan(shop, plan, true);
-    console.log(`[Billing] ✅ direct activate: ${shop} → ${plan}`);
+    await apply(shop, plan, true);
+    console.log(`[Billing] ✅ direct activate (${track}): ${shop} → ${plan}`);
     return res.json({
       success: true,
       confirmationUrl: `${FRONTEND_URL}/admin?shop=${shop}&upgraded=${plan}`,
@@ -183,15 +222,20 @@ export const handleSubscriptionWebhook = async (req, res) => {
     const name = (sub.name || "").toLowerCase();
     const status = (sub.status || "").toUpperCase();
 
+    const isWa = name.includes("whatsapp");
     if (status === "ACTIVE") {
       let planKey = "free";
       if (name.includes("pro")) planKey = "pro";
       else if (name.includes("growth")) planKey = "growth";
       else if (name.includes("starter")) planKey = "starter";
-      await setPlan(shop, planKey, true);
-      console.log(`[Billing] ✅ webhook: ${shop} → ${planKey} ("${sub.name}")`);
+      if (isWa) await setWhatsappPlan(shop, planKey, true);
+      else await setPlan(shop, planKey, true);
+      console.log(
+        `[Billing] ✅ webhook: ${shop} → ${isWa ? "WhatsApp" : "COD"} ${planKey} ("${sub.name}")`,
+      );
     } else if (["CANCELLED", "EXPIRED", "DECLINED", "FROZEN"].includes(status)) {
-      await setPlan(shop, "free", true);
+      if (isWa) await setWhatsappPlan(shop, "free", true);
+      else await setPlan(shop, "free", true);
       console.log(`[Billing] ↩ webhook: ${shop} → free (${status})`);
     }
   } catch (err) {

@@ -20,8 +20,15 @@ const whatsappSessionSchema = new mongoose.Schema({
   sendOnFulfillment: { type: Boolean, default: true },
   sendOnCancellation: { type: Boolean, default: false },
 
-  // ── Plan & message usage (tiered pricing like WhatFlow) ──
+  // ── COD plan (orders) — the main subscription, drives order limits ──
   plan: {
+    type: String,
+    enum: ["free", "starter", "growth", "pro"],
+    default: "free",
+  },
+  // ── WhatsApp plan (messages) — a SEPARATE optional add-on, drives message
+  // limits. COD-only merchants stay on whatsappPlan "free" and pay nothing. ──
+  whatsappPlan: {
     type: String,
     enum: ["free", "starter", "growth", "pro"],
     default: "free",
