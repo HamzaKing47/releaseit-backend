@@ -594,32 +594,41 @@ const handleCancel = async (shop, phone, orderCode) => {
 const findOrder = async (shop, phone, orderCode) => {
   const shopData = await Shop.findOne({ shop });
   if (!shopData) return { shopData: null, order: null };
-  const np = phone.replace(/\D/g, "");
-  if (orderCode) {
-    const d = await shopifyReq(
-      shop,
-      shopData.accessToken,
-      `orders.json?name=%23${orderCode}&status=open`,
-    );
-    if (d.orders?.[0]) return { shopData, order: d.orders[0] };
-  }
+
+  // Fetch recent orders and match by NAME in JS. Shopify's REST `orders.json`
+  // does NOT reliably support a `name=` filter, so we filter ourselves.
+  // status=any includes pending/unfulfilled COD orders.
   const d = await shopifyReq(
     shop,
     shopData.accessToken,
-    "orders.json?status=open&limit=10",
+    "orders.json?status=any&limit=50",
   );
-  return {
-    shopData,
-    order:
-      d.orders?.find((o) => {
+  const list = d.orders || [];
+
+  let order = null;
+  if (orderCode) {
+    const target = String(orderCode).replace(/\D/g, "");
+    order =
+      list.find((o) => (o.name || "").replace(/\D/g, "") === target) || null;
+  }
+  // Fallback: match by the sender's phone (won't work for privacy-LID senders).
+  if (!order) {
+    const np = phone.replace(/\D/g, "");
+    order =
+      list.find((o) => {
         const op = (
           o.shipping_address?.phone ||
           o.customer?.phone ||
           ""
         ).replace(/\D/g, "");
-        return op.slice(-10) === np.slice(-10);
-      }) || null,
-  };
+        return op && np && op.slice(-10) === np.slice(-10);
+      }) || null;
+  }
+
+  console.log(
+    `[WA] findOrder code=${orderCode} → ${order ? order.name : "NOT FOUND"} (searched ${list.length})`,
+  );
+  return { shopData, order };
 };
 
 const mergeTags = (existing, newTags) => {
